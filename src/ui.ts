@@ -42,6 +42,21 @@ export function writeProgress(message: string) {
   process.stdout.write(message);
 }
 
+export function clearLines(count: number) {
+  for (let i = 0; i < count; i++) {
+    process.stdout.write("\x1b[2K"); // Clear current line
+    if (i < count - 1) {
+      process.stdout.write("\x1b[1A"); // Move up one line
+    }
+  }
+  process.stdout.write("\r"); // Move to start of line
+}
+
+export function writeTwoLineProgress(line1: string, line2: string) {
+  clearLines(2);
+  process.stdout.write(`${line1}\n${line2}`);
+}
+
 export function formatDuration(ms: number): string {
   const seconds = Math.floor(ms / 1000);
   const minutes = Math.floor(seconds / 60);

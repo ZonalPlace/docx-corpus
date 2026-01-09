@@ -9,13 +9,14 @@ import { createLocalStorage } from "./storage/local";
 import { createR2Storage } from "./storage/r2";
 import {
   blank,
+  clearLines,
   formatDuration,
   header,
   keyValue,
   progressBar,
   section,
   VERSION,
-  writeProgress,
+  writeTwoLineProgress,
 } from "./ui";
 import { computeHash, extractFilename, validateDocx } from "./validation";
 
@@ -202,8 +203,6 @@ async function scrape(config: ReturnType<typeof loadConfig>, limit: number) {
   const db = await createDb(config.storage.localPath);
   await db.init();
 
-  section("Scanning CDX index...");
-
   // Stats
   const stats = {
     saved: 0,
@@ -213,17 +212,24 @@ async function scrape(config: ReturnType<typeof loadConfig>, limit: number) {
     completed: 0,
   };
 
+  // CDX progress state
+  const cdxProgress = {
+    currentFile: 0,
+    totalFiles: 0,
+    currentFileName: "",
+  };
+
   // Parallel download setup
   const concurrency = config.download.concurrency;
   const downloadLimit = pLimit(concurrency);
   const rateLimiter = createRateLimiter(config.commonCrawl.rateLimitRps);
 
-  // Progress update function (called after each download completes)
+  // Combined progress update function
   const updateProgress = () => {
+    const cdxLine = `  CDX:   [${cdxProgress.currentFile}/${cdxProgress.totalFiles}] ${cdxProgress.currentFileName}`;
     const bar = progressBar(stats.completed, limit);
-    writeProgress(
-      `  ${bar} ${stats.completed}/${limit} (${concurrency} concurrent)`,
-    );
+    const filesLine = `  Files: ${bar} ${stats.completed}/${limit} (${concurrency} workers)`;
+    writeTwoLineProgress(cdxLine, filesLine);
   };
 
   const streamOptions = {
@@ -233,14 +239,16 @@ async function scrape(config: ReturnType<typeof loadConfig>, limit: number) {
       totalFiles: number;
       currentFile: number;
     }) => {
-      writeProgress(
-        `  [${progress.currentFile}/${progress.totalFiles}] ${progress.currentFileName}`,
-      );
+      cdxProgress.currentFile = progress.currentFile;
+      cdxProgress.totalFiles = progress.totalFiles;
+      cdxProgress.currentFileName = progress.currentFileName;
+      updateProgress();
     },
   };
 
   blank();
   section("Downloading");
+  console.log(); // Extra line for two-line progress
 
   const tasks: Promise<void>[] = [];
 
@@ -267,9 +275,8 @@ async function scrape(config: ReturnType<typeof loadConfig>, limit: number) {
   // Wait for all downloads to complete
   await Promise.all(tasks);
 
-  // Clear progress line and show summary
-  writeProgress("");
-  console.log();
+  // Clear progress lines and show summary
+  clearLines(2);
   blank();
 
   section("Summary");
