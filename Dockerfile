@@ -1,5 +1,8 @@
 FROM oven/bun:alpine
 
+# Install bash (needed for CDX streaming)
+RUN apk add --no-cache bash
+
 WORKDIR /app
 
 # Copy dependency files first (layer caching)
