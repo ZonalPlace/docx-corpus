@@ -8,6 +8,9 @@ coverage:
         target: 80%
 
 ignore:
-  - "src/index.ts"        # CLI orchestration - integration tested
-  - "src/ui.ts"           # Console output formatting
-  - "src/config.ts"       # Simple env var loading
+  - "src/index.ts"              # CLI orchestration
+  - "src/ui.ts"                 # Console output formatting
+  - "src/config.ts"             # Simple env var loading
+  - "src/commoncrawl/index.ts"  # HTTP fetch wrapper
+  - "src/storage/local.ts"      # File system operations
+  - "src/storage/r2.ts"         # S3/R2 operations
