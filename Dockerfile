@@ -5,8 +5,8 @@ WORKDIR /app
 # Copy dependency files first (layer caching)
 COPY package.json bun.lock* ./
 
-# Install dependencies (production only)
-RUN bun install --frozen-lockfile --production
+# Install dependencies (production only, skip husky setup)
+RUN bun install --frozen-lockfile --production --ignore-scripts
 
 # Copy source code
 COPY src/ ./src/
