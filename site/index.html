@@ -1,0 +1,103 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>docx-corpus</title>
+  <link rel="icon" type="image/x-icon" href="/public/favicon.ico">
+  <link rel="icon" type="image/png" sizes="32x32" href="/public/favicon-32x32.png">
+  <link rel="icon" type="image/png" sizes="16x16" href="/public/favicon-16x16.png">
+  <link rel="apple-touch-icon" sizes="180x180" href="/public/apple-touch-icon.png">
+  <link rel="manifest" href="/public/site.webmanifest">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600&display=swap" rel="stylesheet">
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+
+    body {
+      font-family: 'Inter', system-ui, sans-serif;
+      background: #FFFFFF;
+      color: #2D2D2D;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      padding: 2rem;
+    }
+
+    .logo { height: 64px; margin-bottom: 1.5rem; }
+
+    .tagline {
+      color: #9CA3AF;
+      font-size: 1.125rem;
+      text-align: center;
+      max-width: 400px;
+      line-height: 1.6;
+    }
+
+    .links {
+      margin-top: 2rem;
+      display: flex;
+      gap: 1.5rem;
+    }
+
+    .links a {
+      color: #F97B6D;
+      text-decoration: none;
+      font-weight: 600;
+    }
+
+    .links a:hover { text-decoration: underline; }
+
+    .files-note {
+      margin-top: 2rem;
+      font-size: 0.875rem;
+      color: #9CA3AF;
+    }
+
+    .files-note code {
+      background: #F3F4F6;
+      padding: 0.25rem 0.5rem;
+      border-radius: 4px;
+      font-family: ui-monospace, monospace;
+    }
+
+    footer {
+      position: absolute;
+      bottom: 2rem;
+      font-size: 0.875rem;
+      color: #9CA3AF;
+    }
+
+    footer a {
+      color: #9CA3AF;
+      text-decoration: none;
+    }
+
+    footer a:hover { text-decoration: underline; }
+
+    @media (prefers-color-scheme: dark) {
+      body { background: #18181B; color: #E5E5E5; }
+      .files-note code { background: #27272A; }
+    }
+  </style>
+</head>
+<body>
+  <img src="/public/logo.png" alt="docx-corpus" class="logo">
+  <p class="tagline">
+    The largest public corpus of .docx files, scraped from Common Crawl for document processing research.
+  </p>
+  <div class="links">
+    <a href="https://github.com/superdoc-dev/docx-corpus">GitHub</a>
+    <a href="/manifest.txt">manifest.txt</a>
+  </div>
+  <p class="files-note">
+    Download the manifest, then fetch files at <code>/documents/{hash}.docx</code>
+  </p>
+  <footer>
+    Built by 🦋 <a href="https://superdoc.dev">SuperDoc</a>
+  </footer>
+</body>
+</html>

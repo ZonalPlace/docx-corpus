@@ -3,6 +3,7 @@ import { type CdxRecord, streamAllCdxFiles } from "./commoncrawl/cdx-index";
 import { getLatestCrawl, listCrawls } from "./commoncrawl/index";
 import { fetchWarcRecord, type WarcResult } from "./commoncrawl/warc";
 import { hasCloudflareCredentials, loadConfig } from "./config";
+import { generateManifest } from "./manifest";
 import { createRateLimiter } from "./rate-limiter";
 import { createDb } from "./storage/db";
 import { createLocalStorage } from "./storage/local";
@@ -297,6 +298,15 @@ async function scrape(
   keyValue("Skipped", stats.skipped);
   keyValue("Failed", stats.failed);
   blank();
+
+  // Generate manifest
+  const manifest = await generateManifest(config.storage.localPath);
+  if (manifest) {
+    section("Manifest");
+    keyValue("Documents", manifest.count);
+    keyValue("File", "manifest.txt");
+    blank();
+  }
 
   const duration = Date.now() - startTime;
   console.log(`Done in ${formatDuration(duration)}`);
