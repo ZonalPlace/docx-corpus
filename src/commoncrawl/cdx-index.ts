@@ -47,10 +47,11 @@ export async function getCdxPaths(crawlId: string): Promise<string[]> {
  */
 export async function* streamCdxFile(
   cdxPath: string,
-  options?: { cacheDir?: string },
+  options?: { cacheDir?: string; verbose?: boolean },
 ): AsyncGenerator<CdxRecord> {
   const filename = cdxPath.split("/").pop() || cdxPath;
   const cacheDir = options?.cacheDir;
+  const verbose = options?.verbose;
   const cacheFile = cacheDir ? `${cacheDir}/${filename}.txt` : null;
 
   // Check cache first
@@ -67,12 +68,32 @@ export async function* streamCdxFile(
   const url = `${CC_DATA_URL}/${cdxPath}`;
   const records: CdxRecord[] = [];
 
+  if (verbose) {
+    console.log(`  [verbose] Fetching: ${url}`);
+  }
+
   // Use curl + gunzip to properly handle multi-member gzip and stream
   const proc = spawn({
-    cmd: ["bash", "-c", `curl -s "${url}" | gunzip | grep "${DOCX_MIME}"`],
+    cmd: ["bash", "-c", `curl -sS "${url}" | gunzip | grep "${DOCX_MIME}"`],
     stdout: "pipe",
     stderr: "pipe",
   });
+
+  // Log stderr in verbose mode
+  if (verbose) {
+    (async () => {
+      const stderrReader = proc.stderr.getReader();
+      const decoder = new TextDecoder();
+      while (true) {
+        const { done, value } = await stderrReader.read();
+        if (done) break;
+        const text = decoder.decode(value);
+        if (text.trim()) {
+          console.error(`  [verbose] stderr: ${text.trim()}`);
+        }
+      }
+    })();
+  }
 
   const reader = proc.stdout.getReader();
   const decoder = new TextDecoder();
@@ -153,11 +174,20 @@ export async function* streamAllCdxFiles(
     limit?: number;
     onProgress?: ProgressCallback;
     cacheDir?: string;
+    verbose?: boolean;
   } = {},
 ): AsyncGenerator<CdxRecord> {
-  const { limit = Infinity, onProgress, cacheDir } = options;
+  const { limit = Infinity, onProgress, cacheDir, verbose } = options;
+
+  if (verbose) {
+    console.log(`  [verbose] Fetching CDX paths for ${crawlId}...`);
+  }
 
   const paths = await getCdxPaths(crawlId);
+
+  if (verbose) {
+    console.log(`  [verbose] Found ${paths.length} CDX index files`);
+  }
 
   let yielded = 0;
   let filesProcessed = 0;
@@ -174,7 +204,7 @@ export async function* streamAllCdxFiles(
       currentFileName: filename,
     });
 
-    for await (const record of streamCdxFile(path, { cacheDir })) {
+    for await (const record of streamCdxFile(path, { cacheDir, verbose })) {
       if (yielded >= limit) break;
 
       yield record;

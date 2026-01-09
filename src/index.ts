@@ -35,6 +35,7 @@ Options
   --limit <n>      Maximum documents to download (default: 100)
   --crawl <id>     Common Crawl index ID (default: latest)
   --keep-index     Cache CDX index files locally for faster reruns
+  --verbose        Show detailed logs for debugging
 
 Examples
   bun run scrape --limit 500
@@ -60,7 +61,7 @@ async function main() {
 
   switch (command) {
     case "scrape":
-      await scrape(config, flags.limit || 100, flags.keepIndex);
+      await scrape(config, flags.limit || 100, flags.keepIndex, flags.verbose);
       break;
     case "status":
       await status(config);
@@ -176,6 +177,7 @@ async function scrape(
   config: ReturnType<typeof loadConfig>,
   limit: number,
   keepIndex?: boolean,
+  verbose?: boolean,
 ) {
   const startTime = Date.now();
   const useCloud = hasCloudflareCredentials(config);
@@ -199,6 +201,7 @@ async function scrape(
   keyValue("Crawl", crawlId);
   keyValue("Workers", config.download.concurrency);
   if (keepIndex) keyValue("Index cache", "enabled");
+  if (verbose) keyValue("Verbose", "enabled");
   blank();
 
   // Initialize storage
@@ -241,6 +244,7 @@ async function scrape(
 
   const streamOptions = {
     limit,
+    verbose,
     cacheDir: keepIndex
       ? `${config.storage.localPath}/cache/cdx/${crawlId}`
       : undefined,
@@ -343,6 +347,7 @@ function parseFlags(args: string[]): {
   limit?: number;
   crawl?: string;
   keepIndex?: boolean;
+  verbose?: boolean;
 } {
   const flags: any = {};
 
@@ -355,6 +360,8 @@ function parseFlags(args: string[]): {
       flags.crawl = args[++i];
     } else if (arg === "--keep-index") {
       flags.keepIndex = true;
+    } else if (arg === "--verbose" || arg === "-v") {
+      flags.verbose = true;
     }
   }
 
