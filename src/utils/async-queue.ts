@@ -10,12 +10,18 @@ export class AsyncQueue<T> {
 
   constructor(private maxSize: number = 1000) {}
 
-  async push(item: T): Promise<void> {
-    while (this.items.length >= this.maxSize) {
+  /**
+   * Push an item to the queue. Blocks if queue is full.
+   * Returns false if queue was closed while waiting.
+   */
+  async push(item: T): Promise<boolean> {
+    while (this.items.length >= this.maxSize && !this.closed) {
       await new Promise<void>((resolve) => this.waitingPushers.push(resolve));
     }
+    if (this.closed) return false;
     this.items.push(item);
     this.waitingPoppers.shift()?.(item);
+    return true;
   }
 
   async pop(): Promise<T | null> {
@@ -30,10 +36,21 @@ export class AsyncQueue<T> {
     return new Promise((resolve) => this.waitingPoppers.push(resolve));
   }
 
+  isClosed(): boolean {
+    return this.closed;
+  }
+
   close() {
     this.closed = true;
+    // Unblock all waiting poppers
     for (const resolve of this.waitingPoppers) {
       resolve(null);
     }
+    this.waitingPoppers = [];
+    // Unblock all waiting pushers
+    for (const resolve of this.waitingPushers) {
+      resolve();
+    }
+    this.waitingPushers = [];
   }
 }

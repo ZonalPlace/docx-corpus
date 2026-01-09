@@ -16,6 +16,7 @@ export type ParallelProgressCallback = (progress: ParallelProgress) => void;
 
 export interface ParallelStreamOptions {
   concurrency?: number;
+  queueSize?: number;
   onProgress?: ParallelProgressCallback;
   cacheDir?: string;
   verbose?: boolean;
@@ -29,10 +30,16 @@ export async function* streamAllCdxFilesParallel(
   crawlId: string,
   options: ParallelStreamOptions = {},
 ): AsyncGenerator<CdxRecord> {
-  const { concurrency = 10, onProgress, cacheDir, verbose } = options;
+  const {
+    concurrency = 10,
+    queueSize = 2000,
+    onProgress,
+    cacheDir,
+    verbose,
+  } = options;
 
   const paths = await getCdxPaths(crawlId);
-  const queue = new AsyncQueue<CdxRecord>(1000);
+  const queue = new AsyncQueue<CdxRecord>(queueSize);
   let pathIndex = 0;
   let completedFiles = 0;
   let activeWorkers = 0;
@@ -77,8 +84,9 @@ export async function* streamAllCdxFilesParallel(
           reportProgress();
         },
       })) {
-        if (stopped) break;
-        await queue.push(record);
+        if (stopped || queue.isClosed()) break;
+        const pushed = await queue.push(record);
+        if (!pushed) break; // Queue was closed while waiting
       }
 
       // File completed

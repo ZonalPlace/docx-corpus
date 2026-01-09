@@ -5,7 +5,7 @@ import { streamAllCdxFilesParallel } from "./commoncrawl/parallel";
 import { fetchWarcRecord, type WarcResult } from "./commoncrawl/warc";
 import { type Config, hasCloudflareCredentials } from "./config";
 import { generateManifest } from "./manifest";
-import { createRateLimiter } from "./rate-limiter";
+import { createRateLimiter, type RateLimiter } from "./rate-limiter";
 import { createDb } from "./storage/db";
 import { createLocalStorage } from "./storage/local";
 import { createR2Storage } from "./storage/r2";
@@ -29,10 +29,11 @@ interface ProcessContext {
   config: Config;
   crawlId: string;
   stats: { saved: number; skipped: number; failed: number };
+  rateLimiter: RateLimiter;
 }
 
 async function processRecord(record: CdxRecord, ctx: ProcessContext) {
-  const { db, storage, config, crawlId, stats } = ctx;
+  const { db, storage, config, crawlId, stats, rateLimiter } = ctx;
 
   // Check if already processed
   const existingByUrl = await db.getDocumentByUrl(record.url);
@@ -46,6 +47,7 @@ async function processRecord(record: CdxRecord, ctx: ProcessContext) {
   try {
     result = await fetchWarcRecord(record, {
       timeoutMs: config.crawl.timeoutMs,
+      rateLimiter,
     });
   } catch (err) {
     stats.failed++;
@@ -170,7 +172,15 @@ export async function scrape(
 
   // Parallel download setup
   const downloadLimit = pLimit(config.crawl.warcConcurrency);
-  const rateLimiter = createRateLimiter(config.crawl.rateLimitRps);
+  const rateLimiter = createRateLimiter({
+    initialRps: config.crawl.rateLimitRps,
+    minRps: config.crawl.minRps,
+    maxRps: config.crawl.maxRps,
+  });
+
+  // Track throughput
+  let lastThroughputUpdate = Date.now();
+  let docsAtLastUpdate = 0;
 
   // Track line count for clearing
   let prevLineCount = 1;
@@ -203,12 +213,29 @@ export async function scrape(
       );
     });
 
-    // WARC progress line
+    // WARC progress line with throughput metrics
     const savedDisplay = Math.min(stats.saved, batchSize);
     const warcBar = progressBar(savedDisplay, batchSize);
+
+    // Calculate docs/sec
+    const now = Date.now();
+    const elapsed = (now - lastThroughputUpdate) / 1000;
+    let docsPerSec = 0;
+    if (elapsed >= 1) {
+      docsPerSec = (stats.saved - docsAtLastUpdate) / elapsed;
+      lastThroughputUpdate = now;
+      docsAtLastUpdate = stats.saved;
+    }
+
+    const currentRps = rateLimiter.getCurrentRps();
+    const { errorCount } = rateLimiter.getStats();
+
     const extras: string[] = [];
+    if (docsPerSec > 0) extras.push(`${docsPerSec.toFixed(1)}/s`);
+    extras.push(`${currentRps} RPS`);
     if (stats.skipped > 0) extras.push(`${stats.skipped} dup`);
     if (stats.failed > 0) extras.push(`${stats.failed} fail`);
+    if (errorCount > 0) extras.push(`${errorCount} retried`);
     const extrasText = extras.length > 0 ? ` (${extras.join(" · ")})` : "";
     lines.push(
       `  WARC: ${warcBar} ${savedDisplay}/${batchSize} saved${extrasText}`,
@@ -220,6 +247,7 @@ export async function scrape(
   const streamOptions = {
     verbose,
     concurrency: config.crawl.cdxConcurrency,
+    queueSize: config.crawl.cdxQueueSize,
     onProgress: (progress: {
       totalFiles: number;
       completedFiles: number;
@@ -261,13 +289,14 @@ export async function scrape(
 
     // Queue parallel download
     const task = downloadLimit(async () => {
-      await rateLimiter();
+      await rateLimiter.acquire();
       await processRecord(record, {
         db,
         storage,
         config,
         crawlId,
         stats,
+        rateLimiter,
       });
       updateProgress();
     }).finally(() => tasks.delete(task));

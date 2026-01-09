@@ -132,12 +132,31 @@ R2_BUCKET_NAME=docx-corpus
 STORAGE_PATH=./corpus
 CRAWL_ID=CC-MAIN-2025-51
 
-# Performance
-CDX_CONCURRENCY=1    # Parallel CDX index downloads
-WARC_CONCURRENCY=10  # Parallel WARC file downloads
-RATE_LIMIT_RPS=10    # Max requests per second
-TIMEOUT_MS=30000
+# Performance tuning
+CDX_CONCURRENCY=3       # Parallel CDX index downloads
+WARC_CONCURRENCY=50     # Parallel WARC file downloads
+RATE_LIMIT_RPS=100      # Initial requests per second
+MAX_RPS=200             # Maximum RPS (adaptive ceiling)
+MIN_RPS=10              # Minimum RPS (adaptive floor)
+CDX_QUEUE_SIZE=2000     # CDX record buffer size
+TIMEOUT_MS=45000        # Request timeout in ms
 ```
+
+### Adaptive Rate Limiting
+
+The scraper uses adaptive rate limiting that automatically adjusts to Common Crawl's server load:
+
+- **On 503/429 errors**: RPS reduces by 20% and retries with exponential backoff
+- **On success streaks**: RPS gradually increases by 5% (up to MAX_RPS)
+- **Progress display**: Shows current RPS, docs/sec throughput, and retry count
+
+### Performance Profiles
+
+| Profile            | Settings                                  | ~Docs/sec |
+| ------------------ | ----------------------------------------- | --------- |
+| Conservative       | `WARC_CONCURRENCY=30 RATE_LIMIT_RPS=50`   | ~15       |
+| Balanced (default) | `WARC_CONCURRENCY=50 RATE_LIMIT_RPS=100`  | ~45       |
+| Aggressive         | `WARC_CONCURRENCY=100 RATE_LIMIT_RPS=150` | ~80       |
 
 ## Corpus Statistics
 

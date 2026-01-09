@@ -6,7 +6,7 @@ describe("createRateLimiter", () => {
     const limiter = createRateLimiter(10); // 10 per second
 
     const start = Date.now();
-    await limiter();
+    await limiter.acquire();
     const elapsed = Date.now() - start;
 
     // Should be nearly instant (< 50ms)
@@ -20,7 +20,7 @@ describe("createRateLimiter", () => {
     const start = Date.now();
     // Consume all tokens
     for (let i = 0; i < rate; i++) {
-      await limiter();
+      await limiter.acquire();
     }
     const elapsed = Date.now() - start;
 
@@ -33,12 +33,12 @@ describe("createRateLimiter", () => {
     const limiter = createRateLimiter(rate);
 
     // Consume all tokens
-    await limiter();
-    await limiter();
+    await limiter.acquire();
+    await limiter.acquire();
 
     // Next call should wait
     const start = Date.now();
-    await limiter();
+    await limiter.acquire();
     const elapsed = Date.now() - start;
 
     // Should wait approximately 500ms (1/2 second for 2 req/sec)
@@ -52,14 +52,14 @@ describe("createRateLimiter", () => {
 
     // Consume all tokens
     for (let i = 0; i < rate; i++) {
-      await limiter();
+      await limiter.acquire();
     }
 
     // Wait for refill (100ms should add 1 token at 10/sec)
     await new Promise((r) => setTimeout(r, 150));
 
     const start = Date.now();
-    await limiter();
+    await limiter.acquire();
     const elapsed = Date.now() - start;
 
     // Should be instant or near-instant since token refilled
@@ -72,7 +72,7 @@ describe("createRateLimiter", () => {
     // Wait time = (1 - 0.5) / 0.5 * 1000 = 1000ms
 
     const start = Date.now();
-    await limiter();
+    await limiter.acquire();
     const elapsed = Date.now() - start;
 
     // Should wait approximately 1 second
@@ -86,7 +86,7 @@ describe("createRateLimiter", () => {
     const start = Date.now();
     // Should all be instant
     for (let i = 0; i < 100; i++) {
-      await limiter();
+      await limiter.acquire();
     }
     const elapsed = Date.now() - start;
 
@@ -98,12 +98,12 @@ describe("createRateLimiter", () => {
     const limiter2 = createRateLimiter(2);
 
     // Exhaust limiter1
-    await limiter1();
-    await limiter1();
+    await limiter1.acquire();
+    await limiter1.acquire();
 
     // limiter2 should still have tokens
     const start = Date.now();
-    await limiter2();
+    await limiter2.acquire();
     const elapsed = Date.now() - start;
 
     expect(elapsed).toBeLessThan(50);
@@ -115,19 +115,97 @@ describe("createRateLimiter", () => {
 
     // Exhaust all tokens
     for (let i = 0; i < rate; i++) {
-      await limiter();
+      await limiter.acquire();
     }
 
     // First call after exhaustion waits ~200ms
     // After waiting, the next call sees elapsed time from the wait,
     // which refills tokens, making it (nearly) immediate
     const start = Date.now();
-    await limiter(); // waits ~200ms
-    await limiter(); // refill from wait time makes this fast
+    await limiter.acquire(); // waits ~200ms
+    await limiter.acquire(); // refill from wait time makes this fast
     const elapsed = Date.now() - start;
 
     // Should wait approximately 200ms total (first wait + fast second)
     expect(elapsed).toBeGreaterThanOrEqual(150);
     expect(elapsed).toBeLessThan(400);
+  });
+
+  test("tracks success and error stats", () => {
+    const limiter = createRateLimiter(100);
+
+    limiter.reportSuccess();
+    limiter.reportSuccess();
+    limiter.reportError(503);
+
+    const stats = limiter.getStats();
+    expect(stats.successCount).toBe(2);
+    expect(stats.errorCount).toBe(1);
+  });
+
+  test("reduces RPS on 503 errors", async () => {
+    const limiter = createRateLimiter({
+      initialRps: 100,
+      minRps: 10,
+      maxRps: 200,
+      backoffFactor: 0.5,
+    });
+
+    expect(limiter.getCurrentRps()).toBe(100);
+
+    limiter.reportError(503);
+    expect(limiter.getCurrentRps()).toBe(50);
+
+    limiter.reportError(503);
+    expect(limiter.getCurrentRps()).toBe(25);
+
+    // Shouldn't go below minRps
+    limiter.reportError(503);
+    limiter.reportError(503);
+    expect(limiter.getCurrentRps()).toBeGreaterThanOrEqual(10);
+  });
+
+  test("increases RPS after success streak", () => {
+    const limiter = createRateLimiter({
+      initialRps: 50,
+      minRps: 10,
+      maxRps: 200,
+      recoveryFactor: 2,
+      successStreakThreshold: 5,
+    });
+
+    expect(limiter.getCurrentRps()).toBe(50);
+
+    // Report 5 successes to trigger recovery
+    for (let i = 0; i < 5; i++) {
+      limiter.reportSuccess();
+    }
+
+    expect(limiter.getCurrentRps()).toBe(100);
+  });
+
+  test("resets success streak on error", () => {
+    const limiter = createRateLimiter({
+      initialRps: 50,
+      minRps: 10,
+      maxRps: 200,
+      successStreakThreshold: 5,
+    });
+
+    // Report 3 successes
+    for (let i = 0; i < 3; i++) {
+      limiter.reportSuccess();
+    }
+
+    // Error resets streak
+    limiter.reportError(500);
+
+    // Report 4 more successes (total 4, not 7)
+    for (let i = 0; i < 4; i++) {
+      limiter.reportSuccess();
+    }
+
+    // Should not have increased yet (need 5 consecutive)
+    expect(limiter.getCurrentRps()).toBe(50);
   });
 });
