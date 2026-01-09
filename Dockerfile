@@ -1,7 +1,7 @@
 FROM oven/bun:alpine
 
-# Install bash (needed for CDX streaming)
-RUN apk add --no-cache bash
+# Install bash and curl (needed for CDX streaming)
+RUN apk add --no-cache bash curl
 
 WORKDIR /app
 
