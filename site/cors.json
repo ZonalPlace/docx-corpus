@@ -1,0 +1,17 @@
+{
+  [
+    {
+      "AllowedOrigins": [
+        "https://docxcorp.us",
+        "https://www.docxcorp.us"
+      ],
+      "AllowedMethods": [
+        "GET",
+        "HEAD"
+      ],
+      "AllowedHeaders": [
+        "*"
+      ],
+      "MaxAgeSeconds": 86400
+    }
+  ]
