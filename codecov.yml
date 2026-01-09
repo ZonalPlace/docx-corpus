@@ -1,0 +1,13 @@
+coverage:
+  status:
+    project:
+      default:
+        target: 80%
+    patch:
+      default:
+        target: 80%
+
+ignore:
+  - "src/index.ts"        # CLI orchestration - integration tested
+  - "src/ui.ts"           # Console output formatting
+  - "src/config.ts"       # Simple env var loading
