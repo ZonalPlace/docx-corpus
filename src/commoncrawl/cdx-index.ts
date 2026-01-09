@@ -2,8 +2,32 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { gunzipSync, spawn } from "bun";
 
 const CC_DATA_URL = "https://data.commoncrawl.org";
-const DOCX_MIME =
+export const DOCX_MIME =
   "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
+
+/**
+ * Parse a CDX line and extract the record if it's a valid .docx
+ * CDX format: "surt timestamp {json}"
+ * Returns null for invalid lines or non-docx records
+ */
+export function parseCdxLine(line: string): CdxRecord | null {
+  if (!line.trim()) return null;
+
+  const jsonStart = line.indexOf("{");
+  if (jsonStart === -1) return null;
+
+  try {
+    const record = JSON.parse(line.slice(jsonStart)) as CdxRecord;
+
+    // Only return actual .docx files (not redirects)
+    if (record.mime === DOCX_MIME && record.status === "200") {
+      return record;
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
 
 export interface CdxRecord {
   url: string;
@@ -112,40 +136,19 @@ export async function* streamCdxFile(
       buffer = lines.pop() || ""; // Keep incomplete line in buffer
 
       for (const line of lines) {
-        if (!line.trim()) continue;
-
-        // Parse CDX line: "surt timestamp {json}"
-        const jsonStart = line.indexOf("{");
-        if (jsonStart === -1) continue;
-
-        try {
-          const record = JSON.parse(line.slice(jsonStart)) as CdxRecord;
-
-          // Only yield actual .docx files (not redirects)
-          if (record.mime === DOCX_MIME && record.status === "200") {
-            if (cacheFile) records.push(record);
-            yield record;
-          }
-        } catch {
-          // Skip malformed lines
+        const record = parseCdxLine(line);
+        if (record) {
+          if (cacheFile) records.push(record);
+          yield record;
         }
       }
     }
 
     // Process any remaining buffer
-    if (buffer.trim()) {
-      const jsonStart = buffer.indexOf("{");
-      if (jsonStart !== -1) {
-        try {
-          const record = JSON.parse(buffer.slice(jsonStart)) as CdxRecord;
-          if (record.mime === DOCX_MIME && record.status === "200") {
-            if (cacheFile) records.push(record);
-            yield record;
-          }
-        } catch {
-          // Skip
-        }
-      }
+    const lastRecord = parseCdxLine(buffer);
+    if (lastRecord) {
+      if (cacheFile) records.push(lastRecord);
+      yield lastRecord;
     }
 
     fullyConsumed = true;
