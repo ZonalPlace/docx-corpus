@@ -41,11 +41,19 @@ export interface CdxRecord {
 
 export interface StreamProgress {
   totalFiles: number;
-  currentFile: number;
-  currentFileName: string;
+  completedFiles: number;
+  currentFile?: string;
+}
+
+export interface FileProgress {
+  filename: string;
+  bytesDownloaded: number;
+  bytesTotal: number;
+  recordsFound: number;
 }
 
 export type ProgressCallback = (progress: StreamProgress) => void;
+export type FileProgressCallback = (progress: FileProgress) => void;
 
 /**
  * Get list of CDX index file paths for a crawl
@@ -67,25 +75,38 @@ export async function getCdxPaths(crawlId: string): Promise<string[]> {
 
 /**
  * Stream .docx records from a single CDX index file
- * Uses curl + gunzip for proper multi-member gzip handling
+ * Uses fetch for download progress + gunzip subprocess for multi-member gzip
  */
 export async function* streamCdxFile(
   cdxPath: string,
-  options?: { cacheDir?: string; verbose?: boolean },
+  options?: {
+    cacheDir?: string;
+    verbose?: boolean;
+    onFileProgress?: FileProgressCallback;
+  },
 ): AsyncGenerator<CdxRecord> {
   const filename = cdxPath.split("/").pop() || cdxPath;
   const cacheDir = options?.cacheDir;
   const verbose = options?.verbose;
+  const onFileProgress = options?.onFileProgress;
   const cacheFile = cacheDir ? `${cacheDir}/${filename}.txt` : null;
 
   // Check cache first
   if (cacheFile && existsSync(cacheFile)) {
     const lines = readFileSync(cacheFile, "utf-8").split("\n");
+    let recordsFound = 0;
     for (const line of lines) {
       if (line.trim()) {
+        recordsFound++;
         yield JSON.parse(line) as CdxRecord;
       }
     }
+    onFileProgress?.({
+      filename,
+      bytesDownloaded: 1,
+      bytesTotal: 1,
+      recordsFound,
+    });
     return;
   }
 
@@ -96,30 +117,52 @@ export async function* streamCdxFile(
     console.log(`  [verbose] Fetching: ${url}`);
   }
 
-  // Use curl + gunzip to properly handle multi-member gzip and stream
-  const proc = spawn({
-    cmd: ["bash", "-c", `curl -sS "${url}" | gunzip | grep "${DOCX_MIME}"`],
+  // Get content length first
+  const headRes = await fetch(url, { method: "HEAD" });
+  const bytesTotal = parseInt(headRes.headers.get("content-length") || "0", 10);
+
+  // Start download
+  const response = await fetch(url);
+  if (!response.ok || !response.body) {
+    throw new Error(`Failed to fetch CDX: ${response.status}`);
+  }
+
+  // Spawn gunzip to handle multi-member gzip
+  const gunzip = spawn({
+    cmd: ["gunzip"],
+    stdin: "pipe",
     stdout: "pipe",
     stderr: "pipe",
   });
 
-  // Log stderr in verbose mode
-  if (verbose) {
-    (async () => {
-      const stderrReader = proc.stderr.getReader();
-      const decoder = new TextDecoder();
-      while (true) {
-        const { done, value } = await stderrReader.read();
-        if (done) break;
-        const text = decoder.decode(value);
-        if (text.trim()) {
-          console.error(`  [verbose] stderr: ${text.trim()}`);
-        }
-      }
-    })();
-  }
+  let bytesDownloaded = 0;
+  let recordsFound = 0;
 
-  const reader = proc.stdout.getReader();
+  // Pipe download to gunzip while tracking progress
+  const downloadReader = response.body.getReader();
+  let downloadAborted = false;
+  (async () => {
+    try {
+      while (!downloadAborted) {
+        const { done, value } = await downloadReader.read();
+        if (done) break;
+        bytesDownloaded += value.length;
+        gunzip.stdin.write(value);
+        onFileProgress?.({
+          filename,
+          bytesDownloaded,
+          bytesTotal,
+          recordsFound,
+        });
+      }
+      gunzip.stdin.end();
+    } catch {
+      // Download cancelled or error
+    }
+  })();
+
+  // Read decompressed output from gunzip
+  const reader = gunzip.stdout.getReader();
   const decoder = new TextDecoder();
   let buffer = "";
   let fullyConsumed = false;
@@ -133,31 +176,43 @@ export async function* streamCdxFile(
 
       // Process complete lines
       const lines = buffer.split("\n");
-      buffer = lines.pop() || ""; // Keep incomplete line in buffer
+      buffer = lines.pop() || "";
 
       for (const line of lines) {
+        if (!line.includes(DOCX_MIME)) continue;
         const record = parseCdxLine(line);
         if (record) {
+          recordsFound++;
           if (cacheFile) records.push(record);
+          onFileProgress?.({
+            filename,
+            bytesDownloaded,
+            bytesTotal,
+            recordsFound,
+          });
           yield record;
         }
       }
     }
 
-    // Process any remaining buffer
-    const lastRecord = parseCdxLine(buffer);
-    if (lastRecord) {
-      if (cacheFile) records.push(lastRecord);
-      yield lastRecord;
+    // Process remaining buffer
+    if (buffer.includes(DOCX_MIME)) {
+      const lastRecord = parseCdxLine(buffer);
+      if (lastRecord) {
+        recordsFound++;
+        if (cacheFile) records.push(lastRecord);
+        yield lastRecord;
+      }
     }
 
     fullyConsumed = true;
   } finally {
-    // Kill subprocess if generator abandoned early
-    proc.kill();
-    await proc.exited;
+    downloadAborted = true;
+    downloadReader.cancel().catch(() => {});
+    gunzip.kill();
+    await gunzip.exited;
 
-    // Only cache if we fully consumed the file (not abandoned mid-stream)
+    // Cache if fully consumed
     if (fullyConsumed && cacheFile && cacheDir && records.length > 0) {
       mkdirSync(cacheDir, { recursive: true });
       writeFileSync(
@@ -193,19 +248,10 @@ export async function* streamAllCdxFiles(
   }
 
   let yielded = 0;
-  let filesProcessed = 0;
+  let completedFiles = 0;
 
   for (const path of paths) {
     if (yielded >= limit) break;
-
-    filesProcessed++;
-    const filename = path.split("/").pop() || path;
-
-    onProgress?.({
-      totalFiles: paths.length,
-      currentFile: filesProcessed,
-      currentFileName: filename,
-    });
 
     for await (const record of streamCdxFile(path, { cacheDir, verbose })) {
       if (yielded >= limit) break;
@@ -213,5 +259,11 @@ export async function* streamAllCdxFiles(
       yield record;
       yielded++;
     }
+
+    completedFiles++;
+    onProgress?.({
+      totalFiles: paths.length,
+      completedFiles,
+    });
   }
 }

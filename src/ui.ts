@@ -24,7 +24,8 @@ export function progressBar(
   total: number,
   width = 20,
 ): string {
-  const filled = Math.round((current / total) * width);
+  const ratio = total > 0 ? Math.min(current / total, 1) : 0;
+  const filled = Math.round(ratio * width);
   const empty = width - filled;
   return "━".repeat(filled) + "░".repeat(empty);
 }
@@ -42,6 +43,21 @@ export function clearLines(count: number) {
 export function writeTwoLineProgress(line1: string, line2: string) {
   clearLines(2);
   process.stdout.write(`${line1}\n${line2}`);
+}
+
+export function writeThreeLineProgress(
+  line1: string,
+  line2: string,
+  line3: string,
+) {
+  clearLines(3);
+  process.stdout.write(`${line1}\n${line2}\n${line3}`);
+}
+
+export function writeMultiLineProgress(lines: string[], prevLineCount: number) {
+  clearLines(prevLineCount);
+  process.stdout.write(lines.join("\n"));
+  return lines.length;
 }
 
 export function formatDuration(ms: number): string {

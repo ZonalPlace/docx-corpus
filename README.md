@@ -129,13 +129,14 @@ R2_SECRET_ACCESS_KEY=
 R2_BUCKET_NAME=docx-corpus
 
 # Scraping
-STORAGE_LOCAL_PATH=./corpus
-COMMONCRAWL_CRAWL_ID=CC-MAIN-2025-51
+STORAGE_PATH=./corpus
+CRAWL_ID=CC-MAIN-2025-51
 
 # Performance
-DOWNLOAD_TIMEOUT_MS=30000
-MAX_FILE_SIZE_MB=50
-COMMONCRAWL_RATE_LIMIT_RPS=10
+CDX_CONCURRENCY=1    # Parallel CDX index downloads
+WARC_CONCURRENCY=10  # Parallel WARC file downloads
+RATE_LIMIT_RPS=10    # Max requests per second
+TIMEOUT_MS=30000
 ```
 
 ## Corpus Statistics
@@ -173,6 +174,7 @@ Contributions are welcome! Please feel free to submit a Pull Request.
 ## Takedown Requests
 
 If you find a document in this corpus that you own and would like removed, please email [help@docxcorp.us](mailto:help@docxcorp.us) with:
+
 - The document hash or URL
 - Proof of ownership
 

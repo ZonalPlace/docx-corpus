@@ -1,12 +1,10 @@
 export interface Config {
-  download: {
-    concurrency: number;
-    timeoutMs: number;
-    maxFileSizeMb: number;
-  };
-  commonCrawl: {
+  crawl: {
+    id: string;
+    cdxConcurrency: number;
+    warcConcurrency: number;
     rateLimitRps: number;
-    crawlId: string;
+    timeoutMs: number;
   };
   storage: {
     localPath: string;
@@ -23,17 +21,15 @@ export function loadConfig(): Config {
   const env = process.env;
 
   return {
-    download: {
-      concurrency: parseInt(env.DOWNLOAD_CONCURRENCY || "", 10) || 10,
-      timeoutMs: parseInt(env.DOWNLOAD_TIMEOUT_MS || "", 10) || 30000,
-      maxFileSizeMb: parseInt(env.MAX_FILE_SIZE_MB || "", 10) || 50,
-    },
-    commonCrawl: {
-      rateLimitRps: parseInt(env.COMMONCRAWL_RATE_LIMIT_RPS || "", 10) || 10,
-      crawlId: env.COMMONCRAWL_CRAWL_ID || "CC-MAIN-2025-51",
+    crawl: {
+      id: env.CRAWL_ID || "CC-MAIN-2025-51",
+      cdxConcurrency: parseInt(env.CDX_CONCURRENCY || "", 10) || 1,
+      warcConcurrency: parseInt(env.WARC_CONCURRENCY || "", 10) || 10,
+      rateLimitRps: parseInt(env.RATE_LIMIT_RPS || "", 10) || 10,
+      timeoutMs: parseInt(env.TIMEOUT_MS || "", 10) || 30000,
     },
     storage: {
-      localPath: env.STORAGE_LOCAL_PATH || "./corpus",
+      localPath: env.STORAGE_PATH || "./corpus",
     },
     cloudflare: {
       accountId: env.CLOUDFLARE_ACCOUNT_ID || "",
