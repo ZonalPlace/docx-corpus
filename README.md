@@ -170,6 +170,14 @@ bun run build
 
 Contributions are welcome! Please feel free to submit a Pull Request.
 
+## Takedown Requests
+
+If you find a document in this corpus that you own and would like removed, please email [help@docxcorp.us](mailto:help@docxcorp.us) with:
+- The document hash or URL
+- Proof of ownership
+
+We will process requests within 7 days.
+
 ## License
 
 MIT
