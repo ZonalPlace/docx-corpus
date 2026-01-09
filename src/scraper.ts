@@ -113,8 +113,7 @@ async function processRecord(record: CdxRecord, ctx: ProcessContext) {
 
 export async function scrape(
   config: Config,
-  limit: number,
-  keepIndex?: boolean,
+  batchSize: number,
   verbose?: boolean,
 ) {
   const startTime = Date.now();
@@ -129,7 +128,7 @@ export async function scrape(
   }
 
   section("Configuration");
-  keyValue("Limit", `${limit} documents`);
+  keyValue("Batch size", `${batchSize} documents`);
   keyValue(
     "Storage",
     useCloud
@@ -139,7 +138,6 @@ export async function scrape(
   keyValue("Crawl", crawlId);
   keyValue("CDX workers", config.crawl.cdxConcurrency);
   keyValue("WARC workers", config.crawl.warcConcurrency);
-  if (keepIndex) keyValue("Index cache", "enabled");
   if (verbose) keyValue("Verbose", "enabled");
   blank();
 
@@ -206,14 +204,14 @@ export async function scrape(
     });
 
     // WARC progress line
-    const savedDisplay = Math.min(stats.saved, limit);
-    const warcBar = progressBar(savedDisplay, limit);
+    const savedDisplay = Math.min(stats.saved, batchSize);
+    const warcBar = progressBar(savedDisplay, batchSize);
     const extras: string[] = [];
     if (stats.skipped > 0) extras.push(`${stats.skipped} dup`);
     if (stats.failed > 0) extras.push(`${stats.failed} fail`);
     const extrasText = extras.length > 0 ? ` (${extras.join(" · ")})` : "";
     lines.push(
-      `  WARC: ${warcBar} ${savedDisplay}/${limit} saved${extrasText}`,
+      `  WARC: ${warcBar} ${savedDisplay}/${batchSize} saved${extrasText}`,
     );
 
     prevLineCount = writeMultiLineProgress(lines, prevLineCount);
@@ -222,9 +220,6 @@ export async function scrape(
   const streamOptions = {
     verbose,
     concurrency: config.crawl.cdxConcurrency,
-    cacheDir: keepIndex
-      ? `${config.storage.localPath}/cache/cdx/${crawlId}`
-      : undefined,
     onProgress: (progress: {
       totalFiles: number;
       completedFiles: number;
@@ -259,7 +254,7 @@ export async function scrape(
     streamOptions,
   )) {
     // Stop when we have enough saved files
-    if (stats.saved >= limit) break;
+    if (stats.saved >= batchSize) break;
 
     stats.discovered++;
     updateProgress();

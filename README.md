@@ -74,8 +74,8 @@ bun install
 ## Usage
 
 ```bash
-# Scrape 100 documents
-bun run scrape --limit 100
+# Scrape 100 new documents
+bun run scrape --batch-size 100
 
 # Check progress
 bun run status
@@ -93,7 +93,7 @@ Run the CLI in a container:
 docker-compose up -d --build
 
 # Run CLI commands
-docker exec docx-corpus bun run scrape --limit 100
+docker exec docx-corpus bun run scrape --batch-size 100
 docker exec docx-corpus bun run status
 docker exec docx-corpus bun run crawls
 
@@ -114,7 +114,7 @@ Files are saved to `./corpus/documents/`
 export CLOUDFLARE_ACCOUNT_ID=xxx
 export R2_ACCESS_KEY_ID=xxx
 export R2_SECRET_ACCESS_KEY=xxx
-bun run scrape --limit 1000
+bun run scrape --batch-size 1000
 ```
 
 ## Configuration

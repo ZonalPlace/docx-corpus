@@ -16,10 +16,9 @@ Commands
   crawls    List available Common Crawl indexes
 
 Options
-  --limit <n>      Maximum documents to download (default: 100)
-  --crawl <id>     Common Crawl index ID (default: latest)
-  --keep-index     Cache CDX index files locally for faster reruns
-  --verbose        Show detailed logs for debugging
+  --batch-size <n>  Documents to save per run (default: 100)
+  --crawl <id>      Common Crawl index ID (default: latest)
+  --verbose         Show detailed logs for debugging
 
 Environment Variables
   CDX_CONCURRENCY   Parallel CDX index downloads (default: 1)
@@ -27,7 +26,7 @@ Environment Variables
   RATE_LIMIT_RPS    Max requests per second (default: 10)
 
 Examples
-  bun run scrape --limit 500
+  bun run scrape --batch-size 500
   bun run scrape --crawl CC-MAIN-2024-51
   bun run status
 `;
@@ -50,7 +49,7 @@ async function main() {
 
   switch (command) {
     case "scrape":
-      await scrape(config, flags.limit || 100, flags.keepIndex, flags.verbose);
+      await scrape(config, flags.batchSize || 100, flags.verbose);
       break;
     case "status":
       await status(config);
@@ -107,27 +106,23 @@ async function showCrawls() {
 }
 
 function parseFlags(args: string[]): {
-  limit?: number;
+  batchSize?: number;
   crawl?: string;
-  keepIndex?: boolean;
   verbose?: boolean;
 } {
   const flags: {
-    limit?: number;
+    batchSize?: number;
     crawl?: string;
-    keepIndex?: boolean;
     verbose?: boolean;
   } = {};
 
   for (let i = 0; i < args.length; i++) {
     const arg = args[i];
 
-    if (arg === "--limit" && args[i + 1]) {
-      flags.limit = parseInt(args[++i], 10);
+    if (arg === "--batch-size" && args[i + 1]) {
+      flags.batchSize = parseInt(args[++i], 10);
     } else if (arg === "--crawl" && args[i + 1]) {
       flags.crawl = args[++i];
-    } else if (arg === "--keep-index") {
-      flags.keepIndex = true;
     } else if (arg === "--verbose" || arg === "-v") {
       flags.verbose = true;
     }
