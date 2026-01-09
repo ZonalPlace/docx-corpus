@@ -1,7 +1,9 @@
-import { streamAllCdxFiles } from "./commoncrawl/cdx-index";
+import pLimit from "p-limit";
+import { type CdxRecord, streamAllCdxFiles } from "./commoncrawl/cdx-index";
 import { getLatestCrawl, listCrawls } from "./commoncrawl/index";
 import { fetchWarcRecord, type WarcResult } from "./commoncrawl/warc";
 import { hasCloudflareCredentials, loadConfig } from "./config";
+import { createRateLimiter } from "./rate-limiter";
 import { createDb } from "./storage/db";
 import { createLocalStorage } from "./storage/local";
 import { createR2Storage } from "./storage/r2";
@@ -71,6 +73,103 @@ async function main() {
   }
 }
 
+interface ProcessContext {
+  db: Awaited<ReturnType<typeof createDb>>;
+  storage:
+    | ReturnType<typeof createLocalStorage>
+    | ReturnType<typeof createR2Storage>;
+  config: ReturnType<typeof loadConfig>;
+  crawlId: string;
+  stats: { saved: number; skipped: number; failed: number; discovered: number };
+}
+
+async function processRecord(record: CdxRecord, ctx: ProcessContext) {
+  const { db, storage, config, crawlId, stats } = ctx;
+
+  // Check if already processed
+  const existingByUrl = await db.getDocumentByUrl(record.url);
+  if (existingByUrl && existingByUrl.status === "uploaded") {
+    stats.skipped++;
+    return;
+  }
+
+  // Download from WARC
+  let result: WarcResult;
+  try {
+    result = await fetchWarcRecord(record as any, {
+      timeoutMs: config.download.timeoutMs,
+    });
+  } catch (err) {
+    stats.failed++;
+    await db.upsertDocument({
+      id: `pending-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+      source_url: record.url,
+      crawl_id: crawlId,
+      original_filename: extractFilename(record.url),
+      status: "failed",
+      error_message: err instanceof Error ? err.message : String(err),
+    });
+    return;
+  }
+
+  // Check file size
+  const maxBytes = config.download.maxFileSizeMb * 1024 * 1024;
+  if (result.contentLength > maxBytes) {
+    stats.skipped++;
+    return;
+  }
+
+  // Validate
+  const validation = validateDocx(result.content);
+  if (!validation.isValid) {
+    stats.failed++;
+    const hash = await computeHash(result.content);
+    await db.upsertDocument({
+      id: hash,
+      source_url: record.url,
+      crawl_id: crawlId,
+      original_filename: extractFilename(record.url),
+      file_size_bytes: result.contentLength,
+      status: "failed",
+      error_message: validation.error,
+      is_valid_docx: false,
+    });
+    return;
+  }
+
+  // Compute hash and save
+  const hash = await computeHash(result.content);
+
+  // Check if already exists by hash
+  const existingByHash = await db.getDocument(hash);
+  if (existingByHash && existingByHash.status === "uploaded") {
+    stats.skipped++;
+    return;
+  }
+
+  // Save to storage
+  const isNew = await storage.save(hash, result.content);
+
+  if (isNew) {
+    stats.saved++;
+  } else {
+    stats.skipped++;
+  }
+
+  // Update database
+  await db.upsertDocument({
+    id: hash,
+    source_url: record.url,
+    crawl_id: crawlId,
+    original_filename: extractFilename(record.url),
+    file_size_bytes: result.contentLength,
+    status: "uploaded",
+    is_valid_docx: true,
+    downloaded_at: new Date().toISOString(),
+    uploaded_at: new Date().toISOString(),
+  });
+}
+
 async function scrape(config: ReturnType<typeof loadConfig>, limit: number) {
   const startTime = Date.now();
   const useCloud = hasCloudflareCredentials(config);
@@ -106,14 +205,26 @@ async function scrape(config: ReturnType<typeof loadConfig>, limit: number) {
   section("Scanning CDX index...");
 
   // Stats
-  let saved = 0;
-  let skipped = 0;
-  let failed = 0;
-  let discovered = 0;
+  const stats = {
+    saved: 0,
+    skipped: 0,
+    failed: 0,
+    discovered: 0,
+    completed: 0,
+  };
 
-  const minDelayMs = 1000 / config.commonCrawl.rateLimitRps;
-  let lastRequestTime = 0;
-  let currentCdxFile = "";
+  // Parallel download setup
+  const concurrency = config.download.concurrency;
+  const downloadLimit = pLimit(concurrency);
+  const rateLimiter = createRateLimiter(config.commonCrawl.rateLimitRps);
+
+  // Progress update function (called after each download completes)
+  const updateProgress = () => {
+    const bar = progressBar(stats.completed, limit);
+    writeProgress(
+      `  ${bar} ${stats.completed}/${limit} (${concurrency} concurrent)`,
+    );
+  };
 
   const streamOptions = {
     limit,
@@ -122,7 +233,6 @@ async function scrape(config: ReturnType<typeof loadConfig>, limit: number) {
       totalFiles: number;
       currentFile: number;
     }) => {
-      currentCdxFile = progress.currentFileName;
       writeProgress(
         `  [${progress.currentFile}/${progress.totalFiles}] ${progress.currentFileName}`,
       );
@@ -132,104 +242,30 @@ async function scrape(config: ReturnType<typeof loadConfig>, limit: number) {
   blank();
   section("Downloading");
 
+  const tasks: Promise<void>[] = [];
+
   for await (const record of streamAllCdxFiles(crawlId, streamOptions)) {
-    discovered++;
+    stats.discovered++;
 
-    // Update progress
-    const bar = progressBar(discovered, limit);
-    writeProgress(`  [${currentCdxFile}] ${bar} ${discovered}/${limit}`);
-
-    // Check if already processed
-    const existingByUrl = await db.getDocumentByUrl(record.url);
-    if (existingByUrl && existingByUrl.status === "uploaded") {
-      skipped++;
-      continue;
-    }
-
-    // Rate limiting
-    const now = Date.now();
-    const elapsed = now - lastRequestTime;
-    if (elapsed < minDelayMs) {
-      await new Promise((r) => setTimeout(r, minDelayMs - elapsed));
-    }
-    lastRequestTime = Date.now();
-
-    // Download from WARC
-    let result: WarcResult;
-    try {
-      result = await fetchWarcRecord(record as any, {
-        timeoutMs: config.download.timeoutMs,
+    // Queue parallel download
+    const task = downloadLimit(async () => {
+      await rateLimiter();
+      await processRecord(record, {
+        db,
+        storage,
+        config,
+        crawlId,
+        stats,
       });
-    } catch (err) {
-      failed++;
-      await db.upsertDocument({
-        id: `pending-${discovered}`,
-        source_url: record.url,
-        crawl_id: crawlId,
-        original_filename: extractFilename(record.url),
-        status: "failed",
-        error_message: err instanceof Error ? err.message : String(err),
-      });
-      continue;
-    }
-
-    // Check file size
-    const maxBytes = config.download.maxFileSizeMb * 1024 * 1024;
-    if (result.contentLength > maxBytes) {
-      skipped++;
-      continue;
-    }
-
-    // Validate
-    const validation = validateDocx(result.content);
-    if (!validation.isValid) {
-      failed++;
-      const hash = await computeHash(result.content);
-      await db.upsertDocument({
-        id: hash,
-        source_url: record.url,
-        crawl_id: crawlId,
-        original_filename: extractFilename(record.url),
-        file_size_bytes: result.contentLength,
-        status: "failed",
-        error_message: validation.error,
-        is_valid_docx: false,
-      });
-      continue;
-    }
-
-    // Compute hash and save
-    const hash = await computeHash(result.content);
-
-    // Check if already exists by hash
-    const existingByHash = await db.getDocument(hash);
-    if (existingByHash && existingByHash.status === "uploaded") {
-      skipped++;
-      continue;
-    }
-
-    // Save to storage
-    const isNew = await storage.save(hash, result.content);
-
-    if (isNew) {
-      saved++;
-    } else {
-      skipped++;
-    }
-
-    // Update database
-    await db.upsertDocument({
-      id: hash,
-      source_url: record.url,
-      crawl_id: crawlId,
-      original_filename: extractFilename(record.url),
-      file_size_bytes: result.contentLength,
-      status: "uploaded",
-      is_valid_docx: true,
-      downloaded_at: new Date().toISOString(),
-      uploaded_at: new Date().toISOString(),
+      stats.completed++;
+      updateProgress();
     });
+
+    tasks.push(task);
   }
+
+  // Wait for all downloads to complete
+  await Promise.all(tasks);
 
   // Clear progress line and show summary
   writeProgress("");
@@ -237,9 +273,9 @@ async function scrape(config: ReturnType<typeof loadConfig>, limit: number) {
   blank();
 
   section("Summary");
-  keyValue("Saved", saved);
-  keyValue("Skipped", skipped);
-  keyValue("Failed", failed);
+  keyValue("Saved", stats.saved);
+  keyValue("Skipped", stats.skipped);
+  keyValue("Failed", stats.failed);
   blank();
 
   const duration = Date.now() - startTime;
