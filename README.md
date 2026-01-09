@@ -1,4 +1,4 @@
-# docx-corpus
+<img width="400" alt="logo" src="https://github.com/user-attachments/assets/ea105e9e-00d0-4d48-a2a4-006cc4e89848" />
 
 [![GitHub release](https://img.shields.io/github/v/release/superdoc-dev/docx-corpus)](https://github.com/superdoc-dev/docx-corpus/releases)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
@@ -14,6 +14,7 @@ Document rendering is hard. Microsoft Word has decades of edge cases, quirks, an
 - Document parsing and rendering engines
 - Visual regression testing
 - Feature coverage analysis
+
 - Edge case discovery
 - Machine learning training data
 
