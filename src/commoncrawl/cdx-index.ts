@@ -219,8 +219,8 @@ export async function* streamCdxFile(
     gunzip.kill();
     await gunzip.exited;
 
-    // Cache if fully consumed
-    if (fullyConsumed && cacheFile && cacheDir && records.length > 0) {
+    // Cache if fully consumed (even empty files, so we don't re-download)
+    if (fullyConsumed && cacheFile && cacheDir) {
       mkdirSync(cacheDir, { recursive: true });
       writeFileSync(cacheFile, records.map((r) => JSON.stringify(r)).join("\n"));
     }
