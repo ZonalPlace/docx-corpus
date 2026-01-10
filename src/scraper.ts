@@ -133,7 +133,7 @@ export async function scrape(
   }
 
   section("Configuration");
-  keyValue("Batch size", `${batchSize} documents`);
+  keyValue("Batch size", batchSize === Infinity ? "all" : `${batchSize} documents`);
   keyValue(
     "Storage",
     useCloud ? `R2 (${config.cloudflare.r2BucketName})` : `local (${config.storage.localPath})`,
@@ -208,9 +208,6 @@ export async function scrape(
     });
 
     // WARC progress line with throughput metrics
-    const savedDisplay = Math.min(stats.saved, batchSize);
-    const warcBar = progressBar(savedDisplay, batchSize);
-
     // Calculate docs/sec
     const now = Date.now();
     const elapsed = (now - lastThroughputUpdate) / 1000;
@@ -231,7 +228,14 @@ export async function scrape(
     if (stats.failed > 0) extras.push(`${stats.failed} fail`);
     if (errorCount > 0) extras.push(`${errorCount} retried`);
     const extrasText = extras.length > 0 ? ` (${extras.join(" · ")})` : "";
-    lines.push(`  WARC: ${warcBar} ${savedDisplay}/${batchSize} saved${extrasText}`);
+
+    if (batchSize === Infinity) {
+      lines.push(`  WARC: ${stats.saved} saved${extrasText}`);
+    } else {
+      const savedDisplay = Math.min(stats.saved, batchSize);
+      const warcBar = progressBar(savedDisplay, batchSize);
+      lines.push(`  WARC: ${warcBar} ${savedDisplay}/${batchSize} saved${extrasText}`);
+    }
 
     prevLineCount = writeMultiLineProgress(lines, prevLineCount);
   };
