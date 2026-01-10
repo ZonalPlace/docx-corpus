@@ -52,8 +52,9 @@ async function processRecord(record: CdxRecord, ctx: ProcessContext) {
     });
   } catch (err) {
     stats.failed++;
+    const urlHash = await computeHash(new TextEncoder().encode(record.url));
     await db.upsertDocument({
-      id: `pending-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+      id: `failed-${urlHash}`,
       source_url: record.url,
       crawl_id: crawlId,
       original_filename: extractFilename(record.url),
