@@ -1,4 +1,3 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { gunzipSync, spawn } from "bun";
 import type { RateLimiter } from "../rate-limiter";
 
@@ -97,22 +96,25 @@ export async function* streamCdxFile(
   const cacheFile = cacheDir ? `${cacheDir}/${filename}.txt` : null;
 
   // Check cache first
-  if (cacheFile && existsSync(cacheFile)) {
-    const lines = readFileSync(cacheFile, "utf-8").split("\n");
-    let recordsFound = 0;
-    for (const line of lines) {
-      if (line.trim()) {
-        recordsFound++;
-        yield JSON.parse(line) as CdxRecord;
+  if (cacheFile) {
+    const file = Bun.file(cacheFile);
+    if (await file.exists()) {
+      const lines = (await file.text()).split("\n");
+      let recordsFound = 0;
+      for (const line of lines) {
+        if (line.trim()) {
+          recordsFound++;
+          yield JSON.parse(line) as CdxRecord;
+        }
       }
+      onFileProgress?.({
+        filename,
+        bytesDownloaded: 1,
+        bytesTotal: 1,
+        recordsFound,
+      });
+      return;
     }
-    onFileProgress?.({
-      filename,
-      bytesDownloaded: 1,
-      bytesTotal: 1,
-      recordsFound,
-    });
-    return;
   }
 
   const url = `${CC_DATA_URL}/${cdxPath}`;
@@ -226,9 +228,8 @@ export async function* streamCdxFile(
     await gunzip.exited;
 
     // Cache if fully consumed (even empty files, so we don't re-download)
-    if (fullyConsumed && cacheFile && cacheDir) {
-      mkdirSync(cacheDir, { recursive: true });
-      writeFileSync(cacheFile, records.map((r) => JSON.stringify(r)).join("\n"));
+    if (fullyConsumed && cacheFile) {
+      await Bun.write(cacheFile, records.map((r) => JSON.stringify(r)).join("\n"));
     }
   }
 }

@@ -1,4 +1,3 @@
-import { mkdir } from "node:fs/promises";
 import { join } from "node:path";
 
 export interface LocalStorage {
@@ -10,8 +9,6 @@ export function createLocalStorage(basePath: string): LocalStorage {
 
   return {
     async save(hash: string, content: Uint8Array): Promise<boolean> {
-      await mkdir(documentsPath, { recursive: true });
-
       const filePath = join(documentsPath, `${hash}.docx`);
 
       // Check if already exists
@@ -20,6 +17,7 @@ export function createLocalStorage(basePath: string): LocalStorage {
         return false; // Already exists, skip
       }
 
+      // Bun.write auto-creates parent directories
       await Bun.write(filePath, content);
       return true;
     },

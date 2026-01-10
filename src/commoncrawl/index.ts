@@ -1,5 +1,3 @@
-import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
-
 const CDX_BASE_URL = "https://index.commoncrawl.org";
 const CACHE_FILE = "crawls.json";
 const CACHE_TTL_MS = 24 * 60 * 60 * 1000; // 24 hours
@@ -15,11 +13,14 @@ export async function listCrawls(options?: {
   const cacheFile = cacheDir ? `${cacheDir}/${CACHE_FILE}` : null;
 
   // Check cache first
-  if (cacheFile && !noCache && existsSync(cacheFile)) {
-    const stat = statSync(cacheFile);
-    const age = Date.now() - stat.mtimeMs;
-    if (age < CACHE_TTL_MS) {
-      return JSON.parse(readFileSync(cacheFile, "utf-8"));
+  if (cacheFile && !noCache) {
+    const file = Bun.file(cacheFile);
+    if (await file.exists()) {
+      const stat = await file.stat();
+      const age = Date.now() - stat.mtimeMs;
+      if (age < CACHE_TTL_MS) {
+        return JSON.parse(await file.text());
+      }
     }
   }
 
@@ -32,10 +33,9 @@ export async function listCrawls(options?: {
   const data = (await response.json()) as Array<{ id: string; name: string }>;
   const crawls = data.map((c) => c.id);
 
-  // Write cache
-  if (cacheFile && cacheDir) {
-    mkdirSync(cacheDir, { recursive: true });
-    writeFileSync(cacheFile, JSON.stringify(crawls));
+  // Write cache (Bun.write creates parent dirs automatically)
+  if (cacheFile) {
+    await Bun.write(cacheFile, JSON.stringify(crawls));
   }
 
   return crawls;
