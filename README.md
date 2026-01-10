@@ -4,7 +4,7 @@
 [![codecov](https://codecov.io/gh/superdoc-dev/docx-corpus/graph/badge.svg)](https://codecov.io/gh/superdoc-dev/docx-corpus)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-Build the largest open corpus of .docx files for document processing and rendering research.
+Building the largest open corpus of .docx files for document processing and rendering research.
 
 ## Vision
 
@@ -74,8 +74,11 @@ bun install
 ## Usage
 
 ```bash
-# Scrape 100 new documents
-bun run scrape --batch 100
+# Scrape all documents from the latest crawl
+bun run scrape
+
+# Limit to 500 documents
+bun run scrape --batch 500
 
 # Re-process URLs already in database
 bun run scrape --force
@@ -99,7 +102,7 @@ Run the CLI in a container:
 docker-compose up -d --build
 
 # Run CLI commands
-docker exec docx-corpus bun run scrape --batch 100
+docker exec docx-corpus bun run scrape
 docker exec docx-corpus bun run status
 docker exec docx-corpus bun run crawls
 
