@@ -77,6 +77,12 @@ bun install
 # Scrape 100 new documents
 bun run scrape --batch-size 100
 
+# Re-process URLs already in database
+bun run scrape --force
+
+# Disable CDX caching (re-download index files)
+bun run scrape --no-cache
+
 # Check progress
 bun run status
 
