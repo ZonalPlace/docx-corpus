@@ -59,6 +59,13 @@
       color: #2D2D2D;
     }
 
+    .counting-note {
+      margin-top: 0.5rem;
+      font-size: 0.8125rem;
+      color: #9CA3AF;
+      font-style: italic;
+    }
+
     .links {
       margin-top: 1.5rem;
       display: flex;
@@ -149,6 +156,7 @@
   <div class="stat-badge">
     <span id="count">—</span> files
   </div>
+  <p class="counting-note">and counting...</p>
   <div class="links">
     <a href="https://github.com/superdoc-dev/docx-corpus">GitHub</a>
     <a href="/manifest.txt">manifest.txt</a>
@@ -168,7 +176,7 @@
         document.getElementById('count').textContent = count.toLocaleString();
       })
       .catch(() => {
-        document.getElementById('count').textContent = 'Thousands of';
+        document.getElementById('count').textContent = 'Hundreds of thousands of';
       });
   </script>
 </body>
