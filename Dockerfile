@@ -12,8 +12,7 @@ COPY package.json bun.lock* ./
 RUN bun install --frozen-lockfile --production --ignore-scripts
 
 # Copy source code
-COPY src/ ./src/
-COPY tsconfig.json ./
+COPY apps/scraper/ ./apps/scraper/
 
 # Keep container running for interactive CLI use
 CMD ["tail", "-f", "/dev/null"]
