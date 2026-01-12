@@ -32,42 +32,40 @@ export async function createDb(databaseUrl: string): Promise<DbClient> {
 
   return {
     async upsertDocument(doc: Partial<DocumentRecord> & { id: string }) {
-      const existing = await sql`SELECT id FROM documents WHERE id = ${doc.id}`.then(
-        (rows) => rows[0]
+      const columns = Object.keys(doc).filter(
+        (k) => doc[k as keyof typeof doc] !== undefined
       );
+      const values = columns.map((k) => doc[k as keyof typeof doc]);
+      const placeholders = columns.map((_, i) => `$${i + 1}`).join(", ");
 
-      if (existing) {
-        // Build dynamic update
-        const updates: Record<string, unknown> = {};
-        for (const [key, value] of Object.entries(doc)) {
-          if (key !== "id" && value !== undefined) {
-            updates[key] = value;
-          }
-        }
+      // Check if this looks like an insert (has required fields) or update (partial)
+      const hasRequiredFields = "source_url" in doc && "crawl_id" in doc;
 
-        if (Object.keys(updates).length > 0) {
-          // Use raw SQL for dynamic updates
-          const setClauses = Object.keys(updates)
-            .map((key, i) => `${key} = $${i + 2}`)
-            .join(", ");
-          const values = [doc.id, ...Object.values(updates)];
-
-          await sql.unsafe(
-            `UPDATE documents SET ${setClauses} WHERE id = $1`,
-            values
-          );
-        }
-      } else {
-        // Insert
-        const columns = Object.keys(doc).filter(
-          (k) => doc[k as keyof typeof doc] !== undefined
-        );
-        const values = columns.map((k) => doc[k as keyof typeof doc]);
-        const placeholders = columns.map((_, i) => `$${i + 1}`).join(", ");
+      if (hasRequiredFields) {
+        // Full insert with ON CONFLICT for atomic upsert
+        const updateColumns = columns.filter((k) => k !== "id");
+        const updateClauses = updateColumns
+          .map((key) => `${key} = EXCLUDED.${key}`)
+          .join(", ");
 
         await sql.unsafe(
-          `INSERT INTO documents (${columns.join(", ")}) VALUES (${placeholders})`,
+          `INSERT INTO documents (${columns.join(", ")}) VALUES (${placeholders})
+           ON CONFLICT (id) DO UPDATE SET ${updateClauses}`,
           values as unknown[]
+        );
+      } else {
+        // Partial update - only update specified fields
+        const updateColumns = columns.filter((k) => k !== "id");
+        if (updateColumns.length === 0) return;
+
+        const setClauses = updateColumns
+          .map((key, i) => `${key} = $${i + 2}`)
+          .join(", ");
+        const updateValues = [doc.id, ...updateColumns.map((k) => doc[k as keyof typeof doc])];
+
+        await sql.unsafe(
+          `UPDATE documents SET ${setClauses} WHERE id = $1`,
+          updateValues
         );
       }
     },
