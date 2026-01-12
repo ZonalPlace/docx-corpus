@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { createDb, type DbClient } from "../storage/db";
+import { spawnSync } from "child_process";
 
 /**
  * These tests require a running Postgres instance.
@@ -8,7 +9,29 @@ import { createDb, type DbClient } from "../storage/db";
 const DATABASE_URL =
   process.env.DATABASE_URL || "postgres://postgres:postgres@localhost:5432/corpus";
 
-describe("db", () => {
+// Check if Postgres is available synchronously by trying to connect
+function isPostgresAvailable(): boolean {
+  const result = spawnSync("bun", ["-e", `
+    const { SQL } = await import("bun");
+    try {
+      const sql = new SQL({ url: "${DATABASE_URL}" });
+      await sql\`SELECT 1\`;
+      await sql.close();
+      process.exit(0);
+    } catch {
+      process.exit(1);
+    }
+  `], { timeout: 5000 });
+  return result.status === 0;
+}
+
+const postgresAvailable = isPostgresAvailable();
+
+if (!postgresAvailable) {
+  console.log("Skipping db tests: Postgres not available at", DATABASE_URL);
+}
+
+describe.skipIf(!postgresAvailable)("db", () => {
   let db: DbClient;
 
   beforeEach(async () => {
