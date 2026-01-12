@@ -1,22 +1,28 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { rmSync } from "node:fs";
-import { mkdtemp } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 import { createDb, type DbClient } from "../storage/db";
+
+/**
+ * These tests require a running Postgres instance.
+ * Start one with: docker-compose up -d
+ */
+const DATABASE_URL =
+  process.env.DATABASE_URL || "postgres://postgres:postgres@localhost:5432/corpus";
 
 describe("db", () => {
   let db: DbClient;
-  let tempDir: string;
 
   beforeEach(async () => {
-    tempDir = await mkdtemp(join(tmpdir(), "db-test-"));
-    db = await createDb(tempDir);
-    await db.init();
+    // Clean up test data from previous runs
+    const { SQL } = await import("bun");
+    const sql = new SQL({ url: DATABASE_URL });
+    await sql`DELETE FROM documents`;
+    await sql.close();
+
+    db = await createDb(DATABASE_URL);
   });
 
-  afterEach(() => {
-    rmSync(tempDir, { recursive: true, force: true });
+  afterEach(async () => {
+    await db.close();
   });
 
   describe("upsertDocument", () => {
@@ -56,7 +62,7 @@ describe("db", () => {
       expect(doc?.source_url).toBe("https://example.com/doc.docx");
     });
 
-    test("converts is_valid_docx true to 1 and back", async () => {
+    test("handles is_valid_docx true", async () => {
       await db.upsertDocument({
         id: "abc123",
         source_url: "https://example.com/doc.docx",
@@ -68,7 +74,7 @@ describe("db", () => {
       expect(doc?.is_valid_docx).toBe(true);
     });
 
-    test("converts is_valid_docx false to 0 and back", async () => {
+    test("handles is_valid_docx false", async () => {
       await db.upsertDocument({
         id: "abc123",
         source_url: "https://example.com/doc.docx",

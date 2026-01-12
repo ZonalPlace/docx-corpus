@@ -6,7 +6,3 @@ services:
       - ./apps/scraper/corpus:/app/corpus
     env_file:
       - ./apps/scraper/.env
-    deploy:
-      resources:
-        limits:
-          memory: ${MEMORY_LIMIT:-8G}

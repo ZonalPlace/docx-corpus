@@ -12,6 +12,9 @@ export interface Config {
   storage: {
     localPath: string;
   };
+  database: {
+    url: string;
+  };
   cloudflare: {
     accountId: string;
     r2AccessKeyId: string;
@@ -26,7 +29,7 @@ export function loadConfig(): Config {
   return {
     crawl: {
       id: env.CRAWL_ID || "",
-      concurrency: parseInt(env.CONCURRENCY || "", 10) || 50,
+      concurrency: parseInt(env.CONCURRENCY || "", 10) || 5,
       rateLimitRps: parseInt(env.RATE_LIMIT_RPS || "", 10) || 50,
       maxRps: parseInt(env.MAX_RPS || "", 10) || 100,
       minRps: parseInt(env.MIN_RPS || "", 10) || 10,
@@ -36,6 +39,9 @@ export function loadConfig(): Config {
     },
     storage: {
       localPath: env.STORAGE_PATH || "./corpus",
+    },
+    database: {
+      url: env.DATABASE_URL || "postgres://postgres:postgres@localhost:5432/corpus",
     },
     cloudflare: {
       accountId: env.CLOUDFLARE_ACCOUNT_ID || "",

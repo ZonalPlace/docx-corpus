@@ -63,8 +63,7 @@ async function main() {
 async function status(config: ReturnType<typeof loadConfig>) {
   header();
 
-  const db = await createDb(config.storage.localPath);
-  await db.init();
+  const db = await createDb(config.database.url);
 
   const stats = await db.getStats();
 

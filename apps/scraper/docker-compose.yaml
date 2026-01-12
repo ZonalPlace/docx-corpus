@@ -6,7 +6,3 @@ services:
       - ./corpus:/app/corpus
     env_file:
       - .env
-    deploy:
-      resources:
-        limits:
-          memory: ${MEMORY_LIMIT:-8G}

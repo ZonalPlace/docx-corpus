@@ -69,10 +69,10 @@ apps/
   scraper/        # Main CLI - downloads WARC records and validates .docx files
 ```
 
-| App | Purpose | Runtime |
-|-----|---------|---------|
-| **cdx-filter** | Filter Common Crawl CDX indexes | AWS Lambda (Node.js) |
-| **scraper** | Download and validate .docx files | Local (Bun) |
+| App            | Purpose                           | Runtime              |
+| -------------- | --------------------------------- | -------------------- |
+| **cdx-filter** | Filter Common Crawl CDX indexes   | AWS Lambda (Node.js) |
+| **scraper**    | Download and validate .docx files | Local (Bun)          |
 
 ## Usage
 
@@ -119,12 +119,6 @@ docker exec docx-corpus-scraper bun run status
 
 # Stop the container
 docker-compose down
-```
-
-The container mounts `./corpus` for persistent storage and defaults to 8GB memory limit. Adjust memory for higher concurrency:
-
-```bash
-MEMORY_LIMIT=16G docker-compose up -d --build
 ```
 
 Pass environment variables via `docker run -e` or add them to your `.env` file in `apps/scraper/`.

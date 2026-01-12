@@ -1,6 +1,4 @@
-import { Database } from "bun:sqlite";
-import { mkdir } from "node:fs/promises";
-import { join } from "node:path";
+import { SQL } from "bun";
 
 export type DocumentStatus = "pending" | "downloading" | "validating" | "uploaded" | "failed";
 
@@ -16,13 +14,9 @@ export interface DocumentRecord {
   discovered_at: string;
   downloaded_at: string | null;
   uploaded_at: string | null;
-  benchmark_score: number | null;
-  benchmark_version: string | null;
-  benchmarked_at: string | null;
 }
 
 export interface DbClient {
-  init(): Promise<void>;
   upsertDocument(doc: Partial<DocumentRecord> & { id: string }): Promise<void>;
   getDocument(id: string): Promise<DocumentRecord | null>;
   getDocumentByUrl(url: string): Promise<DocumentRecord | null>;
@@ -30,118 +24,94 @@ export interface DbClient {
   getDocumentsByStatus(status: DocumentStatus, limit?: number): Promise<DocumentRecord[]>;
   getStats(): Promise<{ status: string; count: number }[]>;
   getAllDocuments(limit?: number): Promise<DocumentRecord[]>;
+  close(): Promise<void>;
 }
 
-export async function createDb(basePath: string): Promise<DbClient> {
-  await mkdir(basePath, { recursive: true });
-  const dbPath = join(basePath, "corpus.db");
-  const db = new Database(dbPath);
-
-  function getDocument(id: string): DocumentRecord | null {
-    const row = db.query("SELECT * FROM documents WHERE id = ?").get(id) as any;
-    return row ? normalizeRow(row) : null;
-  }
+export async function createDb(databaseUrl: string): Promise<DbClient> {
+  const sql = new SQL({ url: databaseUrl });
 
   return {
-    async init() {
-      db.run(`
-        CREATE TABLE IF NOT EXISTS documents (
-          id TEXT PRIMARY KEY,
-          source_url TEXT NOT NULL,
-          crawl_id TEXT NOT NULL,
-          original_filename TEXT,
-          file_size_bytes INTEGER,
-          status TEXT DEFAULT 'pending',
-          error_message TEXT,
-          is_valid_docx INTEGER,
-          discovered_at TEXT DEFAULT (datetime('now')),
-          downloaded_at TEXT,
-          uploaded_at TEXT,
-          benchmark_score REAL,
-          benchmark_version TEXT,
-          benchmarked_at TEXT
-        )
-      `);
-
-      db.run(`CREATE INDEX IF NOT EXISTS idx_status ON documents(status)`);
-      db.run(`CREATE INDEX IF NOT EXISTS idx_crawl ON documents(crawl_id)`);
-      db.run(`CREATE INDEX IF NOT EXISTS idx_url ON documents(source_url)`);
-    },
-
     async upsertDocument(doc: Partial<DocumentRecord> & { id: string }) {
-      const existing = getDocument(doc.id);
+      const existing = await sql`SELECT id FROM documents WHERE id = ${doc.id}`.then(
+        (rows) => rows[0]
+      );
 
       if (existing) {
-        // Update
-        const updates: string[] = [];
-        const values: (string | number | null)[] = [];
-
+        // Build dynamic update
+        const updates: Record<string, unknown> = {};
         for (const [key, value] of Object.entries(doc)) {
           if (key !== "id" && value !== undefined) {
-            updates.push(`${key} = ?`);
-            const v = key === "is_valid_docx" ? (value ? 1 : 0) : value;
-            values.push(v as string | number | null);
+            updates[key] = value;
           }
         }
 
-        if (updates.length > 0) {
-          values.push(doc.id);
-          db.run(`UPDATE documents SET ${updates.join(", ")} WHERE id = ?`, values);
+        if (Object.keys(updates).length > 0) {
+          // Use raw SQL for dynamic updates
+          const setClauses = Object.keys(updates)
+            .map((key, i) => `${key} = $${i + 2}`)
+            .join(", ");
+          const values = [doc.id, ...Object.values(updates)];
+
+          await sql.unsafe(
+            `UPDATE documents SET ${setClauses} WHERE id = $1`,
+            values
+          );
         }
       } else {
         // Insert
-        const columns = Object.keys(doc).filter((k) => doc[k as keyof typeof doc] !== undefined);
-        const placeholders = columns.map(() => "?").join(", ");
-        const values = columns.map((k) => {
-          const val = doc[k as keyof typeof doc];
-          const v = k === "is_valid_docx" ? (val ? 1 : 0) : val;
-          return v as string | number | null;
-        });
+        const columns = Object.keys(doc).filter(
+          (k) => doc[k as keyof typeof doc] !== undefined
+        );
+        const values = columns.map((k) => doc[k as keyof typeof doc]);
+        const placeholders = columns.map((_, i) => `$${i + 1}`).join(", ");
 
-        db.run(`INSERT INTO documents (${columns.join(", ")}) VALUES (${placeholders})`, values);
+        await sql.unsafe(
+          `INSERT INTO documents (${columns.join(", ")}) VALUES (${placeholders})`,
+          values as unknown[]
+        );
       }
     },
 
     async getDocument(id: string) {
-      return getDocument(id);
+      const rows = await sql<DocumentRecord[]>`
+        SELECT * FROM documents WHERE id = ${id}
+      `;
+      return rows[0] || null;
     },
 
     async getDocumentByUrl(url: string) {
-      const row = db.query("SELECT * FROM documents WHERE source_url = ?").get(url) as any;
-      return row ? normalizeRow(row) : null;
+      const rows = await sql<DocumentRecord[]>`
+        SELECT * FROM documents WHERE source_url = ${url}
+      `;
+      return rows[0] || null;
     },
 
     async getPendingDocuments(limit: number) {
-      const rows = db
-        .query("SELECT * FROM documents WHERE status = 'pending' LIMIT ?")
-        .all(limit) as any[];
-      return rows.map(normalizeRow);
+      return sql<DocumentRecord[]>`
+        SELECT * FROM documents WHERE status = 'pending' LIMIT ${limit}
+      `;
     },
 
     async getDocumentsByStatus(status: DocumentStatus, limit = 100) {
-      const rows = db
-        .query("SELECT * FROM documents WHERE status = ? LIMIT ?")
-        .all(status, limit) as any[];
-      return rows.map(normalizeRow);
+      return sql<DocumentRecord[]>`
+        SELECT * FROM documents WHERE status = ${status} LIMIT ${limit}
+      `;
     },
 
     async getStats() {
-      const rows = db
-        .query("SELECT status, COUNT(*) as count FROM documents GROUP BY status")
-        .all() as any[];
-      return rows;
+      return sql<{ status: string; count: number }[]>`
+        SELECT status, COUNT(*)::int as count FROM documents GROUP BY status
+      `;
     },
 
     async getAllDocuments(limit = 1000) {
-      const rows = db.query("SELECT * FROM documents LIMIT ?").all(limit) as any[];
-      return rows.map(normalizeRow);
+      return sql<DocumentRecord[]>`
+        SELECT * FROM documents LIMIT ${limit}
+      `;
     },
-  };
-}
 
-function normalizeRow(row: any): DocumentRecord {
-  return {
-    ...row,
-    is_valid_docx: row.is_valid_docx === 1 ? true : row.is_valid_docx === 0 ? false : null,
+    async close() {
+      await sql.close();
+    },
   };
 }

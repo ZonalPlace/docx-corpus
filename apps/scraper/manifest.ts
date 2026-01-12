@@ -1,21 +1,20 @@
-import { Database } from "bun:sqlite";
+import { SQL } from "bun";
 import { join } from "node:path";
 import { PutObjectCommand, S3Client } from "@aws-sdk/client-s3";
 import type { Config } from "./config";
 
 export async function generateManifest(
+  databaseUrl: string,
   localPath: string,
   cloudflareConfig?: Config["cloudflare"],
 ): Promise<{ count: number; path: string; uploaded: boolean } | null> {
-  const dbPath = join(localPath, "corpus.db");
+  const sql = new SQL({ url: databaseUrl });
 
-  const db = new Database(dbPath, { readonly: true });
+  const rows = await sql<{ id: string }[]>`
+    SELECT id FROM documents WHERE status = 'uploaded' ORDER BY id
+  `;
 
-  const rows = db.query("SELECT id FROM documents WHERE status = 'uploaded' ORDER BY id").all() as {
-    id: string;
-  }[];
-
-  db.close();
+  await sql.close();
 
   if (rows.length === 0) {
     return null;
@@ -59,7 +58,11 @@ if (import.meta.main) {
 
     const cloudflareConfig = hasCloudflareCredentials(config) ? config.cloudflare : undefined;
 
-    const result = await generateManifest(config.storage.localPath, cloudflareConfig);
+    const result = await generateManifest(
+      config.database.url,
+      config.storage.localPath,
+      cloudflareConfig,
+    );
 
     if (!result) {
       console.log("No uploaded documents found.");

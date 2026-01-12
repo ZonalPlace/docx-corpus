@@ -147,8 +147,7 @@ export async function scrape(
     : createLocalStorage(config.storage.localPath);
 
   // Initialize database
-  const db = await createDb(config.storage.localPath);
-  await db.init();
+  const db = await createDb(config.database.url);
 
   // Stats
   const stats = {
@@ -258,7 +257,7 @@ export async function scrape(
 
   // Generate manifest
   const cloudflareConfig = useCloud ? config.cloudflare : undefined;
-  const manifest = await generateManifest(config.storage.localPath, cloudflareConfig);
+  const manifest = await generateManifest(config.database.url, config.storage.localPath, cloudflareConfig);
   if (manifest) {
     section("Manifest");
     keyValue("Documents", manifest.count);
