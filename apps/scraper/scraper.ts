@@ -12,9 +12,10 @@ import {
   blank,
   clearLines,
   formatDuration,
+  formatProgress,
   header,
   keyValue,
-  progressBar,
+  logError,
   section,
   writeMultiLineProgress,
 } from "./ui";
@@ -28,10 +29,11 @@ interface ProcessContext {
   stats: { saved: number; skipped: number; failed: number };
   rateLimiter: RateLimiter;
   force?: boolean;
+  onError?: (status: number, url: string, message: string) => void;
 }
 
 async function processRecord(record: CdxRecord, ctx: ProcessContext) {
-  const { db, storage, config, crawlId, stats, rateLimiter, force } = ctx;
+  const { db, storage, config, crawlId, stats, rateLimiter, force, onError } = ctx;
 
   // Check if already processed (skip if --force)
   if (!force) {
@@ -48,6 +50,7 @@ async function processRecord(record: CdxRecord, ctx: ProcessContext) {
     result = await fetchWarcRecord(record, {
       timeoutMs: config.crawl.timeoutMs,
       rateLimiter,
+      onError,
     });
   } catch (err) {
     stats.failed++;
@@ -169,40 +172,44 @@ export async function scrape(
   // Track throughput
   let lastThroughputUpdate = Date.now();
   let docsAtLastUpdate = 0;
+  let currentDocsPerSec = 0;
 
   // Track line count for clearing
-  let prevLineCount = 1;
+  let prevLineCount = 2;
+
+  // Error logging for verbose mode
+  const onError = verbose
+    ? (_status: number, url: string, message: string) => {
+        // Clear progress lines, log error, then redraw progress
+        clearLines(prevLineCount);
+        logError(`${message} - ${url}`);
+        prevLineCount = 0; // Reset so next update draws fresh
+      }
+    : undefined;
 
   // Progress update function
   const updateProgress = () => {
-    const lines: string[] = [];
-
     // Calculate docs/sec
     const now = Date.now();
     const elapsed = (now - lastThroughputUpdate) / 1000;
-    let docsPerSec = 0;
     if (elapsed >= 1) {
-      docsPerSec = (stats.saved - docsAtLastUpdate) / elapsed;
+      currentDocsPerSec = (stats.saved - docsAtLastUpdate) / elapsed;
       lastThroughputUpdate = now;
       docsAtLastUpdate = stats.saved;
     }
 
     const { errorCount } = rateLimiter.getStats();
 
-    const extras: string[] = [];
-    if (docsPerSec > 0) extras.push(`${docsPerSec.toFixed(1)}/s`);
-    if (stats.skipped > 0) extras.push(`${stats.skipped} dup`);
-    if (stats.failed > 0) extras.push(`${stats.failed} fail`);
-    if (errorCount > 0) extras.push(`${errorCount} retried`);
-    const extrasText = extras.length > 0 ? ` (${extras.join(" · ")})` : "";
-
-    if (batchSize === Infinity) {
-      lines.push(`  WARC: ${stats.saved} saved${extrasText}`);
-    } else {
-      const savedDisplay = Math.min(stats.saved, batchSize);
-      const warcBar = progressBar(savedDisplay, batchSize);
-      lines.push(`  WARC: ${warcBar} ${savedDisplay}/${batchSize} saved${extrasText}`);
-    }
+    const lines = formatProgress({
+      saved: Math.min(stats.saved, batchSize),
+      total: batchSize,
+      docsPerSec: currentDocsPerSec,
+      currentRps: rateLimiter.getCurrentRps(),
+      skipped: stats.skipped,
+      failed: stats.failed,
+      retried: errorCount,
+      elapsedMs: Date.now() - startTime,
+    });
 
     prevLineCount = writeMultiLineProgress(lines, prevLineCount);
   };
@@ -229,8 +236,9 @@ export async function scrape(
         config,
         crawlId,
         stats,
-        rateLimiter: rateLimiter,
+        rateLimiter,
         force,
+        onError,
       });
       updateProgress();
     }).finally(() => tasks.delete(task));

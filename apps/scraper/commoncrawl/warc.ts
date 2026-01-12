@@ -18,6 +18,7 @@ export interface FetchOptions {
   maxRetries?: number;
   maxBackoffMs?: number;
   rateLimiter?: RateLimiter;
+  onError?: (status: number, url: string, message: string) => void;
 }
 
 class HttpError extends Error {
@@ -37,7 +38,7 @@ export async function fetchWarcRecord(
   record: CdxRecord,
   options: FetchOptions = {},
 ): Promise<WarcResult> {
-  const { timeoutMs = 45000, maxRetries = 10, maxBackoffMs = 60000, rateLimiter } = options;
+  const { timeoutMs = 45000, maxRetries = 10, maxBackoffMs = 60000, rateLimiter, onError } = options;
 
   const offset = parseInt(record.offset, 10);
   const length = parseInt(record.length, 10);
@@ -71,6 +72,8 @@ export async function fetchWarcRecord(
       // Handle rate limiting errors with retry
       if (response.status === 503 || response.status === 429) {
         rateLimiter?.reportError(response.status);
+        const statusText = response.status === 429 ? "Too Many Requests" : "Service Unavailable";
+        onError?.(response.status, record.url, `${response.status} ${statusText} - backing off`);
         if (attempt < maxRetries) {
           const baseDelay = Math.min(2 ** attempt * 1000, maxBackoffMs);
           const jitter = Math.random() * 0.3 * baseDelay; // 0-30% jitter
@@ -85,6 +88,7 @@ export async function fetchWarcRecord(
       }
 
       if (!response.ok && response.status !== 206) {
+        onError?.(response.status, record.url, `${response.status} ${response.statusText}`);
         throw new HttpError(
           response.status,
           `WARC fetch failed: ${response.status} ${response.statusText}`,

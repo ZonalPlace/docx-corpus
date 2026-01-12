@@ -52,3 +52,47 @@ export function formatDuration(ms: number): string {
   }
   return `${seconds}s`;
 }
+
+export interface ProgressStats {
+  saved: number;
+  total: number;
+  docsPerSec: number;
+  currentRps: number;
+  skipped: number;
+  failed: number;
+  retried: number;
+  elapsedMs: number;
+}
+
+export function formatProgress(stats: ProgressStats): string[] {
+  const { saved, total, docsPerSec, currentRps, skipped, failed, retried, elapsedMs } = stats;
+
+  const lines: string[] = [];
+
+  // Line 1: Progress bar with count and percentage
+  if (total === Infinity) {
+    lines.push(`━━━━━━━━━━━━━━━━━━━━ ${saved} saved`);
+  } else {
+    const bar = progressBar(saved, total);
+    const pct = total > 0 ? ((saved / total) * 100).toFixed(1) : "0.0";
+    lines.push(`${bar} ${saved}/${total} (${pct}%)`);
+  }
+
+  // Line 2: Metrics
+  const metrics: string[] = [];
+  metrics.push(`${docsPerSec.toFixed(1)}/s @ ${currentRps} RPS`);
+  if (skipped > 0) metrics.push(`${skipped} dup`);
+  if (failed > 0) metrics.push(`${failed} fail`);
+  if (retried > 0) metrics.push(`${retried} retried`);
+  metrics.push(formatDuration(elapsedMs));
+
+  lines.push(metrics.join(" · "));
+
+  return lines;
+}
+
+export function logError(message: string) {
+  const now = new Date();
+  const time = now.toLocaleTimeString("en-US", { hour12: false });
+  console.log(`[${time}] ${message}`);
+}
