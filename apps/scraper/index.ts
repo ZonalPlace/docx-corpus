@@ -15,7 +15,7 @@ Commands
 
 Options
   --batch <n>   Limit to n documents (default: all)
-  --crawl <id>  Common Crawl index ID (required, or set CRAWL_ID env var)
+  --crawl <id>  Common Crawl index ID (default: latest)
   --force       Re-process URLs already in database
   --verbose     Show detailed logs for debugging
 

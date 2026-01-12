@@ -1,5 +1,6 @@
 import pLimit from "p-limit";
 import { streamCdxFromR2, type CdxRecord } from "./commoncrawl/cdx-r2";
+import { getLatestCrawlId } from "./commoncrawl/index";
 import { fetchWarcRecord, type WarcResult } from "./commoncrawl/warc";
 import { type Config, hasCloudflareCredentials } from "./config";
 import { generateManifest } from "./manifest";
@@ -124,9 +125,9 @@ export async function scrape(
 
   header();
 
-  const crawlId = config.crawl.id;
+  let crawlId = config.crawl.id;
   if (!crawlId) {
-    throw new Error("CRAWL_ID must be specified");
+    crawlId = await getLatestCrawlId();
   }
 
   section("Configuration");

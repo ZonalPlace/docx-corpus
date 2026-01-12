@@ -38,7 +38,7 @@ describe.skipIf(!postgresAvailable)("db", () => {
     // Clean up test data from previous runs
     const { SQL } = await import("bun");
     const sql = new SQL({ url: DATABASE_URL });
-    await sql`DELETE FROM documents`;
+    await sql`TRUNCATE documents`;
     await sql.close();
 
     db = await createDb(DATABASE_URL);
