@@ -1,3 +1,5 @@
+import { parseFlags } from "./cli";
+import { getCrawlIds } from "./commoncrawl/index";
 import { loadConfig } from "./config";
 import { scrape } from "./scraper";
 import { createDb } from "./storage/db";
@@ -14,10 +16,13 @@ Commands
   status    Show corpus statistics
 
 Options
-  --batch <n>   Limit to n documents (default: all)
-  --crawl <id>  Common Crawl index ID (default: latest)
-  --force       Re-process URLs already in database
-  --verbose     Show detailed logs for debugging
+  --batch <n>     Limit to n documents per crawl (default: all)
+  --crawl <spec>  Crawl(s) to process (default: latest)
+                    <n>         Latest n crawls (e.g., --crawl 3)
+                    <id>        Single crawl ID
+                    <id>,<id>   Comma-separated list
+  --force         Re-process URLs already in database
+  --verbose       Show detailed logs for debugging
 
 Environment Variables
   CRAWL_ID             Common Crawl index ID (e.g., CC-MAIN-2025-51)
@@ -25,7 +30,9 @@ Environment Variables
   WARC_RATE_LIMIT_RPS  WARC requests per second (default: 50)
 
 Examples
-  bun run scrape --crawl CC-MAIN-2025-51 --batch 500
+  bun run scrape --crawl 3 --batch 100          # Latest 3 crawls, 100 docs each
+  bun run scrape --crawl CC-MAIN-2025-51        # Single crawl
+  bun run scrape --crawl CC-MAIN-2025-51,CC-MAIN-2025-48
   bun run status
 `;
 
@@ -41,13 +48,32 @@ async function main() {
   const flags = parseFlags(args.slice(1));
   const config = loadConfig();
 
-  if (flags.crawl) {
-    config.crawl.id = flags.crawl;
+  // Resolve crawl IDs from flags
+  let crawlIds: string[] | undefined;
+  if (flags.crawlCount !== undefined) {
+    if (flags.crawlCount < 1) {
+      console.error("Error: --crawl count must be at least 1");
+      process.exit(1);
+    }
+    crawlIds = await getCrawlIds(flags.crawlCount);
+    if (crawlIds.length === 0) {
+      console.error("Error: No crawls available");
+      process.exit(1);
+    }
+    if (crawlIds.length < flags.crawlCount) {
+      console.warn(`Warning: Only ${crawlIds.length} crawls available (requested ${flags.crawlCount})`);
+    }
+  } else if (flags.crawlIds) {
+    if (flags.crawlIds.length === 0) {
+      console.error("Error: --crawl requires at least one valid crawl ID");
+      process.exit(1);
+    }
+    crawlIds = flags.crawlIds;
   }
 
   switch (command) {
     case "scrape":
-      await scrape(config, flags.batchSize ?? Infinity, flags.verbose, flags.force);
+      await scrape(config, flags.batchSize ?? Infinity, flags.verbose, flags.force, crawlIds);
       process.exit(0); // Force exit to clean up any lingering async operations
       break;
     case "status":
@@ -78,36 +104,6 @@ async function status(config: ReturnType<typeof loadConfig>) {
 
   blank();
   keyValue("Total", total);
-}
-
-function parseFlags(args: string[]): {
-  batchSize?: number;
-  crawl?: string;
-  verbose?: boolean;
-  force?: boolean;
-} {
-  const flags: {
-    batchSize?: number;
-    crawl?: string;
-    verbose?: boolean;
-    force?: boolean;
-  } = {};
-
-  for (let i = 0; i < args.length; i++) {
-    const arg = args[i];
-
-    if (arg === "--batch" && args[i + 1]) {
-      flags.batchSize = parseInt(args[++i], 10);
-    } else if (arg === "--crawl" && args[i + 1]) {
-      flags.crawl = args[++i];
-    } else if (arg === "--verbose" || arg === "-v") {
-      flags.verbose = true;
-    } else if (arg === "--force" || arg === "-f") {
-      flags.force = true;
-    }
-  }
-
-  return flags;
 }
 
 main().catch((err) => {

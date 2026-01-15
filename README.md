@@ -91,11 +91,14 @@ This reads CDX files directly from Common Crawl S3 (no rate limits) and stores f
 ### 2. Run the scraper
 
 ```bash
-# Scrape all documents from a crawl
+# Scrape from a single crawl
 bun run scrape --crawl CC-MAIN-2025-51
 
-# Limit to 500 documents
-bun run scrape --crawl CC-MAIN-2025-51 --batch 500
+# Scrape latest 3 crawls, 100 docs each
+bun run scrape --crawl 3 --batch 100
+
+# Scrape from multiple specific crawls
+bun run scrape --crawl CC-MAIN-2025-51,CC-MAIN-2025-48 --batch 500
 
 # Re-process URLs already in database
 bun run scrape --crawl CC-MAIN-2025-51 --force

@@ -122,24 +122,33 @@ export async function scrape(
   batchSize: number,
   verbose?: boolean,
   force?: boolean,
+  crawlIds?: string[],
 ) {
   const startTime = Date.now();
   const useCloud = hasCloudflareCredentials(config);
 
   header();
 
-  let crawlId = config.crawl.id;
-  if (!crawlId) {
-    crawlId = await getLatestCrawlId();
+  // Resolve crawl IDs: from param, config, or fetch latest
+  let resolvedCrawlIds: string[];
+  if (crawlIds !== undefined) {
+    if (crawlIds.length === 0) {
+      throw new Error("crawlIds array is empty");
+    }
+    resolvedCrawlIds = crawlIds;
+  } else if (config.crawl.id) {
+    resolvedCrawlIds = [config.crawl.id];
+  } else {
+    resolvedCrawlIds = [await getLatestCrawlId()];
   }
 
   section("Configuration");
-  keyValue("Batch size", batchSize === Infinity ? "all" : `${batchSize} documents`);
+  keyValue("Batch size", batchSize === Infinity ? "all" : `${batchSize} documents per crawl`);
   keyValue(
     "Storage",
     useCloud ? `R2 (${config.cloudflare.r2BucketName})` : `local (${config.storage.localPath})`,
   );
-  keyValue("Crawl", crawlId);
+  keyValue("Crawl(s)", resolvedCrawlIds.join(", "));
   keyValue("Workers", config.crawl.concurrency);
   if (force) keyValue("Force", "re-process all URLs");
   if (verbose) keyValue("Verbose", "enabled");
@@ -153,115 +162,120 @@ export async function scrape(
   // Initialize database
   const db = await createDb(config.database.url);
 
-  // Stats
-  const stats = {
-    saved: 0,
-    skipped: 0,
-    failed: 0,
-    discovered: 0,
-  };
+  // Aggregate stats across all crawls
+  const totalStats = { saved: 0, skipped: 0, failed: 0 };
 
-  // Parallel download setup
-  const downloadLimit = pLimit(config.crawl.concurrency);
-  const rateLimiter = createRateLimiter({
-    initialRps: config.crawl.rateLimitRps,
-    minRps: config.crawl.minRps,
-    maxRps: config.crawl.maxRps,
-  });
+  // Process each crawl
+  for (const crawlId of resolvedCrawlIds) {
+    const crawlStartTime = Date.now();
 
-  // Track throughput
-  let lastThroughputUpdate = Date.now();
-  let docsAtLastUpdate = 0;
-  let currentDocsPerSec = 0;
+    // Per-crawl stats
+    const stats = {
+      saved: 0,
+      skipped: 0,
+      failed: 0,
+      discovered: 0,
+    };
 
-  // Track line count for clearing
-  let prevLineCount = 2;
-
-  // Error logging for verbose mode
-  const onError = verbose
-    ? (_status: number, url: string, message: string) => {
-        // Clear progress lines, log error, then redraw progress
-        clearLines(prevLineCount);
-        logError(`${message} - ${url}`);
-        prevLineCount = 0; // Reset so next update draws fresh
-      }
-    : undefined;
-
-  // Progress update function
-  const updateProgress = () => {
-    // Calculate docs/sec
-    const now = Date.now();
-    const elapsed = (now - lastThroughputUpdate) / 1000;
-    if (elapsed >= 1) {
-      currentDocsPerSec = (stats.saved - docsAtLastUpdate) / elapsed;
-      lastThroughputUpdate = now;
-      docsAtLastUpdate = stats.saved;
-    }
-
-    const { errorCount } = rateLimiter.getStats();
-
-    const lines = formatProgress({
-      saved: Math.min(stats.saved, batchSize),
-      total: batchSize,
-      docsPerSec: currentDocsPerSec,
-      currentRps: rateLimiter.getCurrentRps(),
-      skipped: stats.skipped,
-      failed: stats.failed,
-      retried: errorCount,
-      elapsedMs: Date.now() - startTime,
+    // Parallel download setup
+    const downloadLimit = pLimit(config.crawl.concurrency);
+    const rateLimiter = createRateLimiter({
+      initialRps: config.crawl.rateLimitRps,
+      minRps: config.crawl.minRps,
+      maxRps: config.crawl.maxRps,
     });
 
-    prevLineCount = writeMultiLineProgress(lines, prevLineCount);
-  };
+    // Track throughput (reset per crawl)
+    let lastThroughputUpdate = crawlStartTime;
+    let docsAtLastUpdate = 0;
+    let currentDocsPerSec = 0;
 
-  blank();
-  section("Processing");
-  updateProgress(); // Show initial state
+    // Track line count for clearing
+    let prevLineCount = 2;
 
-  const tasks: Set<Promise<void>> = new Set();
+    // Error logging for verbose mode
+    const onError = verbose
+      ? (_status: number, url: string, message: string) => {
+          clearLines(prevLineCount);
+          logError(`${message} - ${url}`);
+          prevLineCount = 0;
+        }
+      : undefined;
 
-  for await (const record of streamCdxFromR2(config, crawlId)) {
-    // Stop when we have enough saved files
-    if (stats.saved >= batchSize) break;
+    // Progress update function
+    const updateProgress = () => {
+      const now = Date.now();
+      const elapsed = (now - lastThroughputUpdate) / 1000;
+      if (elapsed >= 1) {
+        currentDocsPerSec = (stats.saved - docsAtLastUpdate) / elapsed;
+        lastThroughputUpdate = now;
+        docsAtLastUpdate = stats.saved;
+      }
 
-    stats.discovered++;
+      const { errorCount } = rateLimiter.getStats();
+
+      const lines = formatProgress({
+        saved: Math.min(stats.saved, batchSize),
+        total: batchSize,
+        docsPerSec: currentDocsPerSec,
+        currentRps: rateLimiter.getCurrentRps(),
+        skipped: stats.skipped,
+        failed: stats.failed,
+        retried: errorCount,
+        elapsedMs: Date.now() - crawlStartTime,
+      });
+
+      prevLineCount = writeMultiLineProgress(lines, prevLineCount);
+    };
+
+    blank();
+    section(`Processing ${crawlId}`);
     updateProgress();
 
-    // Queue parallel download
-    const task = downloadLimit(async () => {
-      await rateLimiter.acquire();
-      await processRecord(record, {
-        db,
-        storage,
-        config,
-        crawlId,
-        stats,
-        rateLimiter,
-        force,
-        onError,
-      });
+    const tasks: Set<Promise<void>> = new Set();
+
+    for await (const record of streamCdxFromR2(config, crawlId)) {
+      if (stats.saved >= batchSize) break;
+
+      stats.discovered++;
       updateProgress();
-    }).finally(() => tasks.delete(task));
 
-    tasks.add(task);
+      const task = downloadLimit(async () => {
+        await rateLimiter.acquire();
+        await processRecord(record, {
+          db,
+          storage,
+          config,
+          crawlId,
+          stats,
+          rateLimiter,
+          force,
+          onError,
+        });
+        updateProgress();
+      }).finally(() => tasks.delete(task));
 
-    // Backpressure: if too many tasks queued, wait for some to complete
-    if (tasks.size >= config.crawl.concurrency * 2) {
-      await Promise.race(tasks);
+      tasks.add(task);
+
+      if (tasks.size >= config.crawl.concurrency * 2) {
+        await Promise.race(tasks);
+      }
     }
+
+    await Promise.all(tasks);
+    clearLines(prevLineCount);
+
+    // Accumulate totals
+    totalStats.saved += stats.saved;
+    totalStats.skipped += stats.skipped;
+    totalStats.failed += stats.failed;
   }
 
-  // Wait for remaining downloads to complete
-  await Promise.all(tasks);
-
-  // Clear progress lines
-  clearLines(prevLineCount);
   blank();
-
   section("Summary");
-  keyValue("Saved", stats.saved);
-  keyValue("Skipped", stats.skipped);
-  keyValue("Failed", stats.failed);
+  keyValue("Saved", totalStats.saved);
+  keyValue("Skipped", totalStats.skipped);
+  keyValue("Failed", totalStats.failed);
   blank();
 
   // Generate manifest
