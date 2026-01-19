@@ -17,4 +17,4 @@ COPY tsconfig.base.json ./
 COPY packages/ ./packages/
 COPY apps/cli/ ./apps/cli/
 
-ENTRYPOINT ["bun", "run", "corpus"]
+ENTRYPOINT ["tail", "-f", "/dev/null"]
