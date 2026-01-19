@@ -35,13 +35,7 @@ interface ProcessContext {
 }
 
 async function processRecord(record: CdxRecord, ctx: ProcessContext) {
-  const { db, storage, config, crawlId, stats, rateLimiter, uploadedUrls, force, onError } = ctx;
-
-  // Check if already processed (skip if --force)
-  if (!force && uploadedUrls.has(record.url)) {
-    stats.skipped++;
-    return;
-  }
+  const { db, storage, config, crawlId, stats, rateLimiter, onError } = ctx;
 
   // Download from WARC
   let result: WarcResult;
@@ -252,6 +246,13 @@ export async function scrape(options: ScrapeOptions) {
       updateProgress();
 
       const task = downloadLimit(async () => {
+        // Check duplicates BEFORE rate limiting (instant skip)
+        if (!force && uploadedUrls.has(record.url)) {
+          stats.skipped++;
+          updateProgress();
+          return;
+        }
+
         await rateLimiter.acquire();
         await processRecord(record, {
           db,
