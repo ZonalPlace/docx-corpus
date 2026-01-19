@@ -1,5 +1,6 @@
-import { readdir, mkdir } from "node:fs/promises";
+import { mkdir, rm } from "node:fs/promises";
 import { join, basename, dirname } from "node:path";
+import { tmpdir } from "node:os";
 import type { ExtractConfig, ExtractedDocument, ExtractionProgress } from "./types";
 
 const PYTHON_DIR = join(dirname(import.meta.path), "python");
@@ -8,22 +9,32 @@ const SCRIPT_PATH = join(PYTHON_DIR, "extract.py");
 
 const PROGRESS_FILE = "progress.json";
 const ERRORS_FILE = "errors.jsonl";
+const OUTPUT_FILE = "documents.jsonl";
 
 export async function processDirectory(
   config: ExtractConfig,
   verbose: boolean = false
 ): Promise<void> {
-  await mkdir(config.outputDir, { recursive: true });
+  const { storage, inputPrefix, outputPrefix } = config;
 
-  const files = await findDocxFiles(config.inputDir);
+  // List all .docx files in input prefix
+  const files: string[] = [];
+  for await (const key of storage.list(inputPrefix)) {
+    if (key.toLowerCase().endsWith(".docx") && !basename(key).startsWith("~$")) {
+      files.push(key);
+    }
+  }
+  files.sort();
+
   if (files.length === 0) {
-    console.log("No DOCX files found in input directory");
+    console.log(`No DOCX files found in ${inputPrefix}`);
     return;
   }
 
   console.log(`Found ${files.length} DOCX files`);
 
-  const progress = await loadProgress(config);
+  // Load progress
+  const progress = await loadProgress(storage, outputPrefix);
   const startIndex = config.resume ? progress.processedFiles : 0;
 
   if (config.resume && startIndex > 0) {
@@ -33,58 +44,81 @@ export async function processDirectory(
   progress.totalFiles = files.length;
   progress.startedAt = progress.startedAt || new Date().toISOString();
 
-  const outputPath = join(config.outputDir, "documents.jsonl");
-  const outputFile = Bun.file(outputPath);
-  const writer = outputFile.writer();
+  // Create temp directory for processing
+  const tempDir = join(tmpdir(), `docx-extract-${Date.now()}`);
+  await mkdir(tempDir, { recursive: true });
+
+  // Collect output lines in memory, write at end
+  const outputLines: string[] = [];
+
+  // Load existing output if resuming
+  if (config.resume && startIndex > 0) {
+    const existingOutput = await storage.read(`${outputPrefix}/${OUTPUT_FILE}`);
+    if (existingOutput) {
+      const text = new TextDecoder().decode(existingOutput);
+      outputLines.push(...text.trim().split("\n").filter(Boolean));
+    }
+  }
 
   const batches = chunkArray(files.slice(startIndex), config.batchSize);
   let totalProcessed = startIndex;
 
-  for (const batch of batches) {
-    const results = await processBatch(batch, config.workers, verbose);
+  try {
+    for (const batch of batches) {
+      const results = await processBatch(batch, storage, tempDir, config.workers, verbose);
 
-    for (const result of results) {
-      if (result.success && result.document) {
-        writer.write(JSON.stringify(result.document) + "\n");
-        progress.successCount++;
-      } else {
-        progress.errorCount++;
-        await appendError(config.outputDir, result.error || "Unknown error", result.filePath);
+      for (const result of results) {
+        if (result.success && result.document) {
+          outputLines.push(JSON.stringify(result.document));
+          progress.successCount++;
+        } else {
+          progress.errorCount++;
+          await appendError(storage, outputPrefix, result.error || "Unknown error", result.sourceKey);
+        }
       }
+
+      totalProcessed += batch.length;
+      progress.processedFiles = totalProcessed;
+      progress.lastProcessedKey = batch[batch.length - 1];
+      progress.updatedAt = new Date().toISOString();
+
+      // Save progress and output
+      await saveProgress(storage, outputPrefix, progress);
+      await storage.write(
+        `${outputPrefix}/${OUTPUT_FILE}`,
+        outputLines.join("\n") + "\n"
+      );
+
+      const percent = ((totalProcessed / files.length) * 100).toFixed(1);
+      console.log(
+        `Progress: ${totalProcessed}/${files.length} (${percent}%) - ` +
+          `Success: ${progress.successCount}, Errors: ${progress.errorCount}`
+      );
     }
-
-    totalProcessed += batch.length;
-    progress.processedFiles = totalProcessed;
-    progress.lastProcessedFile = batch[batch.length - 1];
-    progress.updatedAt = new Date().toISOString();
-
-    await saveProgress(config.outputDir, progress);
-
-    const percent = ((totalProcessed / files.length) * 100).toFixed(1);
-    console.log(
-      `Progress: ${totalProcessed}/${files.length} (${percent}%) - ` +
-        `Success: ${progress.successCount}, Errors: ${progress.errorCount}`
-    );
+  } finally {
+    // Cleanup temp directory
+    await rm(tempDir, { recursive: true, force: true });
   }
-
-  await writer.end();
 
   console.log("\nExtraction complete!");
   console.log(`  Total: ${files.length}`);
   console.log(`  Success: ${progress.successCount}`);
   console.log(`  Errors: ${progress.errorCount}`);
-  console.log(`  Output: ${outputPath}`);
+  console.log(`  Output: ${outputPrefix}/${OUTPUT_FILE}`);
 }
 
 interface ProcessResult {
-  filePath: string;
+  sourceKey: string;
   success: boolean;
   document?: ExtractedDocument;
   error?: string;
 }
 
-async function extractWithPython(filePath: string): Promise<ExtractedDocument> {
-  const proc = Bun.spawn([PYTHON_PATH, SCRIPT_PATH, filePath], {
+async function extractWithPython(
+  sourceKey: string,
+  localFilePath: string
+): Promise<ExtractedDocument> {
+  const proc = Bun.spawn([PYTHON_PATH, SCRIPT_PATH, localFilePath], {
     stdout: "pipe",
     stderr: "pipe",
   });
@@ -99,11 +133,11 @@ async function extractWithPython(filePath: string): Promise<ExtractedDocument> {
   }
 
   const result = JSON.parse(stdout);
-  const id = generateId(filePath);
+  const id = generateId(sourceKey);
 
   return {
     id,
-    sourcePath: filePath,
+    sourceKey,
     text: result.text,
     wordCount: result.wordCount,
     charCount: result.charCount,
@@ -114,37 +148,52 @@ async function extractWithPython(filePath: string): Promise<ExtractedDocument> {
 }
 
 async function processBatch(
-  files: string[],
+  keys: string[],
+  storage: ExtractConfig["storage"],
+  tempDir: string,
   workers: number,
   verbose: boolean
 ): Promise<ProcessResult[]> {
   const results: ProcessResult[] = [];
-  const queue = [...files];
+  const queue = [...keys];
 
   const processFile = async (): Promise<void> => {
     while (queue.length > 0) {
-      const filePath = queue.shift();
-      if (!filePath) continue;
+      const sourceKey = queue.shift();
+      if (!sourceKey) continue;
 
       try {
-        const document = await extractWithPython(filePath);
-        results.push({ filePath, success: true, document });
+        // Download file from storage to temp
+        const content = await storage.read(sourceKey);
+        if (!content) {
+          throw new Error(`File not found: ${sourceKey}`);
+        }
+
+        const tempFile = join(tempDir, `${generateId(sourceKey)}.docx`);
+        await Bun.write(tempFile, content);
+
+        // Extract using Python
+        const document = await extractWithPython(sourceKey, tempFile);
+        results.push({ sourceKey, success: true, document });
+
+        // Cleanup temp file
+        await rm(tempFile, { force: true });
 
         if (verbose) {
-          console.log(`  Extracted: ${basename(filePath)} (${document.wordCount} words)`);
+          console.log(`  Extracted: ${basename(sourceKey)} (${document.wordCount} words)`);
         }
       } catch (err) {
         const error = err instanceof Error ? err.message : String(err);
-        results.push({ filePath, success: false, error });
+        results.push({ sourceKey, success: false, error });
 
         if (verbose) {
-          console.error(`  Failed: ${basename(filePath)}: ${error}`);
+          console.error(`  Failed: ${basename(sourceKey)}: ${error}`);
         }
       }
     }
   };
 
-  const workerPromises = Array(Math.min(workers, files.length))
+  const workerPromises = Array(Math.min(workers, keys.length))
     .fill(null)
     .map(() => processFile());
 
@@ -152,44 +201,20 @@ async function processBatch(
   return results;
 }
 
-async function findDocxFiles(dir: string): Promise<string[]> {
-  const files: string[] = [];
-
-  async function scan(currentDir: string): Promise<void> {
-    const entries = await readdir(currentDir, { withFileTypes: true });
-
-    for (const entry of entries) {
-      const fullPath = join(currentDir, entry.name);
-
-      if (entry.isDirectory()) {
-        await scan(fullPath);
-      } else if (
-        entry.isFile() &&
-        entry.name.toLowerCase().endsWith(".docx") &&
-        !entry.name.startsWith("~$")
-      ) {
-        files.push(fullPath);
-      }
-    }
-  }
-
-  await scan(dir);
-  return files.sort();
-}
-
-function generateId(filePath: string): string {
+function generateId(key: string): string {
   const hasher = new Bun.CryptoHasher("sha256");
-  hasher.update(filePath);
+  hasher.update(key);
   return hasher.digest("hex").slice(0, 16);
 }
 
-async function loadProgress(config: ExtractConfig): Promise<ExtractionProgress> {
-  const progressPath = join(config.outputDir, PROGRESS_FILE);
-
+async function loadProgress(
+  storage: ExtractConfig["storage"],
+  outputPrefix: string
+): Promise<ExtractionProgress> {
   try {
-    const file = Bun.file(progressPath);
-    if (await file.exists()) {
-      return await file.json();
+    const content = await storage.read(`${outputPrefix}/${PROGRESS_FILE}`);
+    if (content) {
+      return JSON.parse(new TextDecoder().decode(content));
     }
   } catch {
     // Ignore errors, return fresh progress
@@ -205,18 +230,30 @@ async function loadProgress(config: ExtractConfig): Promise<ExtractionProgress> 
   };
 }
 
-async function saveProgress(outputDir: string, progress: ExtractionProgress): Promise<void> {
-  const progressPath = join(outputDir, PROGRESS_FILE);
-  await Bun.write(progressPath, JSON.stringify(progress, null, 2));
+async function saveProgress(
+  storage: ExtractConfig["storage"],
+  outputPrefix: string,
+  progress: ExtractionProgress
+): Promise<void> {
+  await storage.write(
+    `${outputPrefix}/${PROGRESS_FILE}`,
+    JSON.stringify(progress, null, 2)
+  );
 }
 
-async function appendError(outputDir: string, error: string, filePath: string): Promise<void> {
-  const errorsPath = join(outputDir, ERRORS_FILE);
-  const line = JSON.stringify({ filePath, error, timestamp: new Date().toISOString() }) + "\n";
+async function appendError(
+  storage: ExtractConfig["storage"],
+  outputPrefix: string,
+  error: string,
+  sourceKey: string
+): Promise<void> {
+  const errorsKey = `${outputPrefix}/${ERRORS_FILE}`;
+  const line = JSON.stringify({ sourceKey, error, timestamp: new Date().toISOString() }) + "\n";
 
-  const file = Bun.file(errorsPath);
-  const existing = (await file.exists()) ? await file.text() : "";
-  await Bun.write(errorsPath, existing + line);
+  // Read existing errors and append
+  const existing = await storage.read(errorsKey);
+  const existingText = existing ? new TextDecoder().decode(existing) : "";
+  await storage.write(errorsKey, existingText + line);
 }
 
 function chunkArray<T>(array: T[], size: number): T[][] {

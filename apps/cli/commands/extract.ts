@@ -1,20 +1,20 @@
-import { processDirectory, type ExtractConfig } from "@docx-corpus/extractor";
+import {
+  processDirectory,
+  loadExtractorConfig,
+  hasCloudflareCredentials,
+  type ExtractConfig,
+} from "@docx-corpus/extractor";
+import { createLocalStorage, createR2Storage } from "@docx-corpus/shared";
 
 interface ParsedFlags {
-  inputDir: string;
-  outputDir: string;
-  batchSize: number;
-  workers: number;
+  batchSize?: number;
+  workers?: number;
   resume: boolean;
   verbose: boolean;
 }
 
 function parseFlags(args: string[]): ParsedFlags {
   const flags: ParsedFlags = {
-    inputDir: "",
-    outputDir: "",
-    batchSize: 100,
-    workers: 4,
     resume: false,
     verbose: false,
   };
@@ -24,24 +24,14 @@ function parseFlags(args: string[]): ParsedFlags {
     const next = args[i + 1];
 
     switch (arg) {
-      case "--input":
-      case "-i":
-        flags.inputDir = next || "";
-        i++;
-        break;
-      case "--output":
-      case "-o":
-        flags.outputDir = next || "";
-        i++;
-        break;
       case "--batch-size":
       case "-b":
-        flags.batchSize = parseInt(next || "100", 10);
+        flags.batchSize = parseInt(next || "", 10);
         i++;
         break;
       case "--workers":
       case "-w":
-        flags.workers = parseInt(next || "4", 10);
+        flags.workers = parseInt(next || "", 10);
         i++;
         break;
       case "--resume":
@@ -58,35 +48,38 @@ function parseFlags(args: string[]): ParsedFlags {
   return flags;
 }
 
-function validateFlags(flags: ParsedFlags): string | null {
-  if (!flags.inputDir) return "Error: --input (-i) is required";
-  if (!flags.outputDir) return "Error: --output (-o) is required";
-  if (flags.batchSize < 1 || flags.batchSize > 10000) {
-    return "Error: --batch-size must be between 1 and 10000";
-  }
-  if (flags.workers < 1 || flags.workers > 32) {
-    return "Error: --workers must be between 1 and 32";
-  }
-  return null;
-}
-
 const HELP = `
 corpus extract - Extract text from DOCX files using Docling
 
 Usage
   corpus extract [options]
 
+Storage is auto-selected based on environment:
+  - With R2 credentials: reads from r2://documents/, writes to r2://extracted/
+  - Without R2 credentials: reads from ./corpus/documents/, writes to ./corpus/extracted/
+
 Options
-  --input, -i <dir>       Input directory containing DOCX files (required)
-  --output, -o <dir>      Output directory for extracted data (required)
-  --batch-size, -b <n>    Number of files per batch (default: 100)
-  --workers, -w <n>       Number of parallel workers (default: 4)
+  --batch-size, -b <n>    Number of files per batch (default: from EXTRACT_BATCH_SIZE or 100)
+  --workers, -w <n>       Number of parallel workers (default: from EXTRACT_WORKERS or 4)
   --resume, -r            Resume from last checkpoint
   --verbose, -v           Show detailed progress
+  --help, -h              Show this help
+
+Environment Variables
+  STORAGE_PATH            Local storage path (default: ./corpus)
+  CLOUDFLARE_ACCOUNT_ID   Cloudflare account ID (enables R2)
+  R2_ACCESS_KEY_ID        R2 access key
+  R2_SECRET_ACCESS_KEY    R2 secret key
+  R2_BUCKET_NAME          R2 bucket (default: docx-corpus)
+  EXTRACT_INPUT_PREFIX    Input prefix (default: documents)
+  EXTRACT_OUTPUT_PREFIX   Output prefix (default: extracted)
+  EXTRACT_BATCH_SIZE      Batch size (default: 100)
+  EXTRACT_WORKERS         Worker count (default: 4)
 
 Examples
-  corpus extract -i ./docs -o ./output
-  corpus extract -i ./docs -o ./output --resume -v
+  corpus extract                    # Use defaults from env
+  corpus extract --resume -v        # Resume with verbose output
+  corpus extract -b 50 -w 8         # Custom batch/workers
 `;
 
 export async function runExtract(args: string[]) {
@@ -96,27 +89,37 @@ export async function runExtract(args: string[]) {
   }
 
   const flags = parseFlags(args);
-  const error = validateFlags(flags);
+  const envConfig = loadExtractorConfig();
+  const useCloud = hasCloudflareCredentials(envConfig);
 
-  if (error) {
-    console.error(error);
-    console.error("Use 'corpus extract --help' for usage information");
-    process.exit(1);
-  }
+  // Create storage based on credentials
+  const storage = useCloud
+    ? createR2Storage({
+        accountId: envConfig.cloudflare.accountId,
+        accessKeyId: envConfig.cloudflare.r2AccessKeyId,
+        secretAccessKey: envConfig.cloudflare.r2SecretAccessKey,
+        bucket: envConfig.cloudflare.r2BucketName,
+      })
+    : createLocalStorage(envConfig.storage.localPath);
 
   const config: ExtractConfig = {
-    inputDir: flags.inputDir,
-    outputDir: flags.outputDir,
-    batchSize: flags.batchSize,
-    workers: flags.workers,
+    storage,
+    inputPrefix: envConfig.extract.inputPrefix,
+    outputPrefix: envConfig.extract.outputPrefix,
+    batchSize: flags.batchSize ?? envConfig.extract.batchSize,
+    workers: flags.workers ?? envConfig.extract.workers,
     resume: flags.resume,
   };
 
   console.log("Text Extractor");
   console.log("==============");
-  console.log(`Input:   ${config.inputDir}`);
-  console.log(`Output:  ${config.outputDir}`);
+  console.log(
+    `Storage: ${useCloud ? `R2 (${envConfig.cloudflare.r2BucketName})` : `local (${envConfig.storage.localPath})`}`
+  );
+  console.log(`Input:   ${config.inputPrefix}/`);
+  console.log(`Output:  ${config.outputPrefix}/`);
   console.log(`Workers: ${config.workers}`);
+  console.log(`Batch:   ${config.batchSize}`);
   if (config.resume) console.log("Resume:  enabled");
   console.log("");
 

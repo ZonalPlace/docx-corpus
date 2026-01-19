@@ -6,11 +6,11 @@ import { type Config, hasCloudflareCredentials } from "./config";
 import { generateManifest } from "./manifest";
 import { createRateLimiter, type RateLimiter } from "./rate-limiter";
 import { createDb } from "./storage/db";
-import { createLocalStorage } from "./storage/local";
-import { createR2Storage } from "./storage/r2";
 import {
   blank,
   clearLines,
+  createLocalStorage,
+  createR2Storage,
   formatDuration,
   formatProgress,
   header,
@@ -18,12 +18,13 @@ import {
   logError,
   section,
   writeMultiLineProgress,
+  type Storage,
 } from "@docx-corpus/shared";
 import { computeHash, extractFilename, validateDocx } from "./validation";
 
 interface ProcessContext {
   db: Awaited<ReturnType<typeof createDb>>;
-  storage: ReturnType<typeof createLocalStorage> | ReturnType<typeof createR2Storage>;
+  storage: Storage;
   config: Config;
   crawlId: string;
   stats: { saved: number; skipped: number; failed: number };
@@ -94,8 +95,8 @@ async function processRecord(record: CdxRecord, ctx: ProcessContext) {
     return;
   }
 
-  // Save to storage
-  const isNew = await storage.save(hash, result.content);
+  // Save to storage (key includes path and extension)
+  const isNew = await storage.writeIfNotExists(`documents/${hash}.docx`, result.content);
 
   if (isNew) {
     stats.saved++;
@@ -160,7 +161,12 @@ export async function scrape(options: ScrapeOptions) {
 
   // Initialize storage
   const storage = useCloud
-    ? createR2Storage(config.cloudflare)
+    ? createR2Storage({
+        accountId: config.cloudflare.accountId,
+        accessKeyId: config.cloudflare.r2AccessKeyId,
+        secretAccessKey: config.cloudflare.r2SecretAccessKey,
+        bucket: config.cloudflare.r2BucketName,
+      })
     : createLocalStorage(config.storage.localPath);
 
   // Initialize database

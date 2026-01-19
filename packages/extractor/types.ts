@@ -1,9 +1,11 @@
+import type { Storage } from "@docx-corpus/shared";
+
 /**
  * Extracted document data from Docling
  */
 export interface ExtractedDocument {
   id: string;
-  sourcePath: string;
+  sourceKey: string;
   text: string;
   wordCount: number;
   charCount: number;
@@ -16,8 +18,9 @@ export interface ExtractedDocument {
  * Configuration for the extraction process
  */
 export interface ExtractConfig {
-  inputDir: string;
-  outputDir: string;
+  storage: Storage;
+  inputPrefix: string;
+  outputPrefix: string;
   batchSize: number;
   workers: number;
   resume: boolean;
@@ -31,7 +34,7 @@ export interface ExtractionProgress {
   processedFiles: number;
   successCount: number;
   errorCount: number;
-  lastProcessedFile?: string;
+  lastProcessedKey?: string;
   startedAt: string;
   updatedAt: string;
 }

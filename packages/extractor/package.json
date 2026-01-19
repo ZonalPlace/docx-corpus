@@ -9,6 +9,9 @@
     "typecheck": "tsc --noEmit",
     "setup": "cd python && uv sync"
   },
+  "dependencies": {
+    "@docx-corpus/shared": "workspace:*"
+  },
   "devDependencies": {
     "@types/bun": "latest",
     "typescript": "^5.9.3"

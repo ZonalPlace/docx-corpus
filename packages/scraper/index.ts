@@ -8,10 +8,9 @@ export { scrape, type ScrapeOptions } from "./scraper";
 // Configuration
 export { loadConfig, hasCloudflareCredentials, type Config } from "./config";
 
-// Storage
+// Storage (db is scraper-specific, others re-exported from shared)
 export { createDb, type DbClient, type DocumentRecord, type DocumentStatus } from "./storage/db";
-export { createLocalStorage, type LocalStorage } from "./storage/local";
-export { createR2Storage, type R2Storage } from "./storage/r2";
+export { createLocalStorage, createR2Storage, type Storage, type R2Config } from "@docx-corpus/shared";
 
 // Common Crawl utilities
 export { getLatestCrawlId, getCrawlIds } from "./commoncrawl/index";
