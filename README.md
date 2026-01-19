@@ -180,6 +180,12 @@ MIN_RPS=10                  # Min requests per second
 TIMEOUT_MS=45000            # Request timeout in ms
 MAX_RETRIES=10              # Max retry attempts
 MAX_BACKOFF_MS=60000        # Max backoff delay (ms)
+
+# Extractor
+EXTRACT_INPUT_PREFIX=documents  # Input directory prefix
+EXTRACT_OUTPUT_PREFIX=extracted # Output directory prefix
+EXTRACT_BATCH_SIZE=100          # Documents per batch
+EXTRACT_WORKERS=4               # Parallel workers
 ```
 
 ### Rate Limiting
