@@ -5,7 +5,7 @@ on:
   push:
     branches: [main]
     paths:
-      - "site/**"
+      - "apps/web/**"
 
 jobs:
   deploy:
@@ -19,5 +19,5 @@ jobs:
           AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
           AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
         run: |
-          aws s3 sync site/ s3://${{ secrets.R2_BUCKET_NAME }}/ \
+          aws s3 sync apps/web/ s3://${{ secrets.R2_BUCKET_NAME }}/ \
             --endpoint-url https://${{ secrets.CLOUDFLARE_ACCOUNT_ID }}.r2.cloudflarestorage.com

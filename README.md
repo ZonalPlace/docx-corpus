@@ -75,6 +75,7 @@ packages/
 apps/
   cli/            # Unified CLI - corpus <command>
   cdx-filter/     # AWS Lambda - filters CDX indexes for .docx URLs
+  web/            # Landing page - docxcorp.us
 ```
 
 | Package/App    | Purpose                           | Runtime              |
@@ -83,6 +84,7 @@ apps/
 | **scraper**    | Download and validate .docx files | Bun                  |
 | **extractor**  | Extract text from .docx files     | Bun + Python         |
 | **cdx-filter** | Filter Common Crawl CDX indexes   | AWS Lambda (Node.js) |
+| **web**        | Landing page                      | Static HTML          |
 
 ## Usage
 
