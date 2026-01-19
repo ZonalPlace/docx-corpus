@@ -8,7 +8,6 @@ const PYTHON_PATH = join(PYTHON_DIR, ".venv", "bin", "python");
 const SCRIPT_PATH = join(PYTHON_DIR, "extract.py");
 
 const INDEX_FILE = "index.jsonl";
-const ERRORS_FILE = "errors.jsonl";
 
 export async function processDirectory(
   config: ExtractConfig,
@@ -191,13 +190,14 @@ async function appendError(
   error: string,
   sourceKey: string
 ): Promise<void> {
-  const errorsKey = `${outputPrefix}/${ERRORS_FILE}`;
-  const line = JSON.stringify({ sourceKey, error, timestamp: new Date().toISOString() }) + "\n";
+  const indexKey = `${outputPrefix}/${INDEX_FILE}`;
+  const id = extractIdFromKey(sourceKey);
+  const line = JSON.stringify({ id, error, extractedAt: new Date().toISOString() }) + "\n";
 
-  // Read existing errors and append
-  const existing = await storage.read(errorsKey);
+  // Read existing index and append
+  const existing = await storage.read(indexKey);
   const existingText = existing ? new TextDecoder().decode(existing) : "";
-  await storage.write(errorsKey, existingText + line);
+  await storage.write(indexKey, existingText + line);
 }
 
 async function loadProcessedIds(
@@ -212,7 +212,10 @@ async function loadProcessedIds(
       for (const line of text.split("\n")) {
         if (line.trim()) {
           const entry = JSON.parse(line);
-          ids.add(entry.id);
+          // Only skip files that were successfully processed (no error field)
+          if (!entry.error) {
+            ids.add(entry.id);
+          }
         }
       }
     }
