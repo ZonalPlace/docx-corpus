@@ -5,10 +5,10 @@ import { fetchWarcRecord, type WarcResult } from "./commoncrawl/warc";
 import { type Config, hasCloudflareCredentials } from "./config";
 import { generateManifest } from "./manifest";
 import { createRateLimiter, type RateLimiter } from "./rate-limiter";
-import { createDb } from "./storage/db";
 import {
   blank,
   clearLines,
+  createDb,
   createLocalStorage,
   createR2Storage,
   formatDuration,

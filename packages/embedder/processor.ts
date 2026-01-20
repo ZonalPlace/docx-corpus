@@ -1,51 +1,33 @@
 import { join, dirname } from "node:path";
-import type { EmbedConfig, EmbeddedDocument, EmbeddingIndexEntry, EmbeddingModel } from "./types";
-import { formatProgress, writeMultiLineProgress } from "@docx-corpus/shared";
+import type { EmbedConfig, EmbeddingModel } from "./types";
+import { formatProgress, writeMultiLineProgress, type DocumentRecord } from "@docx-corpus/shared";
 
 const PYTHON_DIR = join(dirname(import.meta.path), "python");
 const PYTHON_PATH = join(PYTHON_DIR, ".venv", "bin", "python");
 const SCRIPT_PATH = join(PYTHON_DIR, "embed.py");
 
-const INDEX_FILE = "index.jsonl";
-const EXTRACTED_INDEX = "index.jsonl";
-
-/**
- * Entry from the extraction index
- */
-interface ExtractedIndexEntry {
-  id: string;
-  extractedAt: string;
-  wordCount: number;
-  charCount: number;
-  tableCount: number;
-  imageCount: number;
-  error?: string;
-}
-
 export async function processEmbeddings(
   config: EmbedConfig,
   verbose: boolean = false
 ): Promise<void> {
-  const { storage, inputPrefix, outputPrefix, model, batchSize } = config;
+  const { db, storage, inputPrefix, model, batchSize } = config;
 
-  // Load already-embedded IDs
-  const embeddedIds = await loadEmbeddedIds(storage, outputPrefix);
-  if (embeddedIds.size > 0) {
-    console.log(`Already embedded: ${embeddedIds.size} documents`);
+  // Get embedding stats from database
+  const stats = await db.getEmbeddingStats();
+  if (stats.embedded > 0) {
+    console.log(`Already embedded: ${stats.embedded} documents`);
   }
 
-  // Load extraction index to get document IDs
-  const extractedDocs = await loadExtractedIndex(storage, inputPrefix);
-  const toEmbed = extractedDocs.filter((d) => !embeddedIds.has(d.id));
+  // Get unembedded documents from database
+  console.log(`Querying database for unembedded documents...`);
+  const documents = await db.getUnembeddedDocuments(batchSize);
 
-  if (toEmbed.length === 0) {
+  if (documents.length === 0) {
     console.log("No new documents to embed");
     return;
   }
 
-  // Apply batch limit
-  const batch = batchSize === Infinity ? toEmbed : toEmbed.slice(0, batchSize);
-  console.log(`Found ${toEmbed.length} documents to embed (processing ${batch.length})`);
+  console.log(`Found ${documents.length} documents to embed`);
 
   // Process in batches for Python
   const pythonBatchSize = 32; // Send 32 docs at a time to Python
@@ -70,7 +52,7 @@ export async function processEmbeddings(
 
     const lines = formatProgress({
       saved: processed,
-      total: batch.length,
+      total: documents.length,
       docsPerSec: currentDocsPerSec,
       failed: errorCount > 0 ? errorCount : undefined,
       elapsedMs: now - startTime,
@@ -82,12 +64,12 @@ export async function processEmbeddings(
   const progressInterval = !verbose ? setInterval(updateProgress, 100) : null;
 
   try {
-    for (let i = 0; i < batch.length; i += pythonBatchSize) {
-      const pythonBatch = batch.slice(i, i + pythonBatchSize);
+    for (let i = 0; i < documents.length; i += pythonBatchSize) {
+      const batch = documents.slice(i, i + pythonBatchSize);
 
-      // Read text for each doc
+      // Read text for each doc from storage
       const docsWithText: { id: string; text: string }[] = [];
-      for (const doc of pythonBatch) {
+      for (const doc of batch) {
         try {
           const textContent = await storage.read(`${inputPrefix}/${doc.id}.txt`);
           if (textContent) {
@@ -109,24 +91,15 @@ export async function processEmbeddings(
         // Call Python with batch
         const embeddings = await embedBatch(docsWithText, model);
 
-        // Save each embedding
+        // Save each embedding to database
         for (const emb of embeddings) {
-          const embeddedDoc: EmbeddedDocument = {
+          await db.updateEmbedding({
             id: emb.id,
             embedding: emb.embedding,
-            model,
-            dimensions: emb.dimensions,
-            embeddedAt: new Date().toISOString(),
-          };
+            embedding_model: model,
+            embedded_at: new Date().toISOString(),
+          });
 
-          // Write embedding file
-          await storage.write(
-            `${outputPrefix}/${emb.id}.json`,
-            JSON.stringify(embeddedDoc)
-          );
-
-          // Append to index
-          await appendToIndex(storage, outputPrefix, embeddedDoc);
           processed++;
 
           if (verbose) {
@@ -150,8 +123,6 @@ export async function processEmbeddings(
   }
 
   console.log(`Embedded: ${processed} documents, ${errorCount} errors`);
-  console.log(`  Output: ${outputPrefix}/{hash}.json`);
-  console.log(`  Index: ${outputPrefix}/${INDEX_FILE}`);
 }
 
 async function embedBatch(
@@ -164,7 +135,6 @@ async function embedBatch(
     stderr: "pipe",
     env: {
       ...process.env,
-      // Pass through VOYAGE_API_KEY if set
     },
   });
 
@@ -188,70 +158,4 @@ async function embedBatch(
     .split("\n")
     .filter(Boolean)
     .map((line) => JSON.parse(line));
-}
-
-async function loadEmbeddedIds(
-  storage: EmbedConfig["storage"],
-  outputPrefix: string
-): Promise<Set<string>> {
-  const ids = new Set<string>();
-  try {
-    const content = await storage.read(`${outputPrefix}/${INDEX_FILE}`);
-    if (content) {
-      const text = new TextDecoder().decode(content);
-      for (const line of text.split("\n")) {
-        if (line.trim()) {
-          const entry = JSON.parse(line) as EmbeddingIndexEntry;
-          ids.add(entry.id);
-        }
-      }
-    }
-  } catch {
-    // Index doesn't exist yet
-  }
-  return ids;
-}
-
-async function loadExtractedIndex(
-  storage: EmbedConfig["storage"],
-  inputPrefix: string
-): Promise<ExtractedIndexEntry[]> {
-  const docs: ExtractedIndexEntry[] = [];
-  try {
-    const content = await storage.read(`${inputPrefix}/${EXTRACTED_INDEX}`);
-    if (content) {
-      const text = new TextDecoder().decode(content);
-      for (const line of text.split("\n")) {
-        if (line.trim()) {
-          const entry = JSON.parse(line) as ExtractedIndexEntry;
-          // Skip entries with errors
-          if (!entry.error) {
-            docs.push(entry);
-          }
-        }
-      }
-    }
-  } catch {
-    // Index doesn't exist
-  }
-  return docs;
-}
-
-async function appendToIndex(
-  storage: EmbedConfig["storage"],
-  outputPrefix: string,
-  doc: EmbeddedDocument
-): Promise<void> {
-  const indexKey = `${outputPrefix}/${INDEX_FILE}`;
-  const entry: EmbeddingIndexEntry = {
-    id: doc.id,
-    model: doc.model,
-    dimensions: doc.dimensions,
-    embeddedAt: doc.embeddedAt,
-  };
-
-  // Read existing index and append
-  const existing = await storage.read(indexKey);
-  const existingText = existing ? new TextDecoder().decode(existing) : "";
-  await storage.write(indexKey, existingText + JSON.stringify(entry) + "\n");
 }

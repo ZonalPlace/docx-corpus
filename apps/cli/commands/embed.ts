@@ -6,12 +6,11 @@ import {
   type EmbedConfig,
   type EmbeddingModel,
 } from "@docx-corpus/embedder";
-import { createLocalStorage, createR2Storage } from "@docx-corpus/shared";
+import { createDb, createLocalStorage, createR2Storage } from "@docx-corpus/shared";
 
 interface ParsedFlags {
   model?: EmbeddingModel;
   batchSize?: number;
-  workers?: number;
   verbose: boolean;
 }
 
@@ -35,11 +34,6 @@ function parseFlags(args: string[]): ParsedFlags {
         flags.batchSize = parseInt(next || "", 10);
         i++;
         break;
-      case "--workers":
-      case "-w":
-        flags.workers = parseInt(next || "", 10);
-        i++;
-        break;
       case "--verbose":
       case "-v":
         flags.verbose = true;
@@ -56,11 +50,12 @@ corpus embed - Generate embeddings for extracted documents
 Usage
   corpus embed [options]
 
+Reads extracted text from storage and writes embeddings to the database.
 Storage is auto-selected based on environment:
-  - With R2 credentials: reads from r2://extracted/, writes to r2://embeddings/
-  - Without R2 credentials: reads from ./corpus/extracted/, writes to ./corpus/embeddings/
+  - With R2 credentials: reads from r2://extracted/
+  - Without R2 credentials: reads from ./corpus/extracted/
 
-Already-embedded files are automatically skipped (tracked in index.jsonl).
+Embedding progress is tracked in the database (embedded_at column).
 
 Options
   --model, -m <name>      Embedding model (default: minilm)
@@ -68,20 +63,18 @@ Options
                             bge-m3      - BAAI/bge-m3 (better quality, 1024 dims)
                             voyage-lite - Voyage 3.5 lite (best, requires API key)
   --batch, -b <n>         Limit to n documents (default: all)
-  --workers, -w <n>       Number of parallel workers (default: 4)
   --verbose, -v           Show detailed progress
   --help, -h              Show this help
 
 Environment Variables
+  DATABASE_URL            PostgreSQL connection string (required)
   STORAGE_PATH            Local storage path (default: ./corpus)
   CLOUDFLARE_ACCOUNT_ID   Cloudflare account ID (enables R2)
   R2_ACCESS_KEY_ID        R2 access key
   R2_SECRET_ACCESS_KEY    R2 secret key
   R2_BUCKET_NAME          R2 bucket (default: docx-corpus)
   EMBED_INPUT_PREFIX      Input prefix (default: extracted)
-  EMBED_OUTPUT_PREFIX     Output prefix (default: embeddings)
   EMBED_MODEL             Default model (default: minilm)
-  EMBED_WORKERS           Worker count (default: 4)
   VOYAGE_API_KEY          Voyage AI API key (required for voyage-lite)
 
 Examples
@@ -99,6 +92,13 @@ export async function runEmbed(args: string[]) {
 
   const flags = parseFlags(args);
   const envConfig = loadEmbedderConfig();
+
+  // Validate database URL
+  if (!envConfig.database.url) {
+    console.error("Error: DATABASE_URL environment variable is required");
+    process.exit(1);
+  }
+
   const useCloud = hasCloudflareCredentials(envConfig);
   const model = flags.model ?? envConfig.embed.model;
 
@@ -107,6 +107,9 @@ export async function runEmbed(args: string[]) {
     console.error("Error: VOYAGE_API_KEY environment variable required for voyage-lite model");
     process.exit(1);
   }
+
+  // Create database client
+  const db = await createDb(envConfig.database.url);
 
   // Create storage based on credentials
   const storage = useCloud
@@ -119,12 +122,11 @@ export async function runEmbed(args: string[]) {
     : createLocalStorage(envConfig.storage.localPath);
 
   const config: EmbedConfig = {
+    db,
     storage,
     inputPrefix: envConfig.embed.inputPrefix,
-    outputPrefix: envConfig.embed.outputPrefix,
     model,
-    batchSize: flags.batchSize ?? Infinity,
-    workers: flags.workers ?? envConfig.embed.workers,
+    batchSize: flags.batchSize ?? 1000000,
   };
 
   console.log("Document Embedder");
@@ -133,10 +135,9 @@ export async function runEmbed(args: string[]) {
     `Storage: ${useCloud ? `R2 (${envConfig.cloudflare.r2BucketName})` : `local (${envConfig.storage.localPath})`}`
   );
   console.log(`Input:   ${config.inputPrefix}/`);
-  console.log(`Output:  ${config.outputPrefix}/`);
+  console.log(`Output:  database (embedding column)`);
   console.log(`Model:   ${config.model}`);
-  console.log(`Workers: ${config.workers}`);
-  console.log(`Batch:   ${config.batchSize === Infinity ? "all" : config.batchSize}`);
+  console.log(`Batch:   ${config.batchSize >= 1000000 ? "all" : config.batchSize}`);
   console.log("");
 
   try {
@@ -144,5 +145,7 @@ export async function runEmbed(args: string[]) {
   } catch (err) {
     console.error("Fatal error:", err);
     process.exit(1);
+  } finally {
+    await db.close();
   }
 }

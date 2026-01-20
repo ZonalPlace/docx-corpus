@@ -1,4 +1,4 @@
-import type { Storage } from "@docx-corpus/shared";
+import type { DbClient, Storage } from "@docx-corpus/shared";
 
 /**
  * Extracted document data from Docling
@@ -18,6 +18,7 @@ export interface ExtractedDocument {
  * Configuration for the extraction process
  */
 export interface ExtractConfig {
+  db: DbClient;
   storage: Storage;
   inputPrefix: string;
   outputPrefix: string;

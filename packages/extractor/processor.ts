@@ -2,54 +2,37 @@ import { mkdir, rm } from "node:fs/promises";
 import { join, basename, dirname } from "node:path";
 import { tmpdir } from "node:os";
 import type { ExtractConfig, ExtractedDocument } from "./types";
-import { formatProgress, writeMultiLineProgress } from "@docx-corpus/shared";
+import { formatProgress, writeMultiLineProgress, type DocumentRecord } from "@docx-corpus/shared";
 
 const PYTHON_DIR = join(dirname(import.meta.path), "python");
 const PYTHON_PATH = join(PYTHON_DIR, ".venv", "bin", "python");
 const SCRIPT_PATH = join(PYTHON_DIR, "extract.py");
 
-const INDEX_FILE = "index.jsonl";
-
 export async function processDirectory(
   config: ExtractConfig,
   verbose: boolean = false
 ): Promise<void> {
-  const { storage, inputPrefix, outputPrefix, batchSize } = config;
+  const { db, storage, inputPrefix, outputPrefix, batchSize } = config;
 
-  // Load index to get already-processed IDs and existing errors
-  const indexState = await loadIndexState(storage, outputPrefix);
-
-  if (indexState.successIds.size > 0) {
-    console.log(`Already extracted: ${indexState.successIds.size} documents`);
+  // Get extraction stats from database
+  const stats = await db.getExtractionStats();
+  if (stats.extracted > 0) {
+    console.log(`Already extracted: ${stats.extracted} documents`);
   }
-  if (indexState.errorIds.size > 0) {
-    console.log(`Previous errors: ${indexState.errorIds.size} documents (will retry)`);
+  if (stats.errors > 0) {
+    console.log(`Previous errors: ${stats.errors} documents`);
   }
 
-  // List .docx files, filtering out already-processed ones
-  const files: string[] = [];
+  // Get unextracted documents from database
+  console.log(`Querying database for unextracted documents...`);
+  const documents = await db.getUnextractedDocuments(batchSize);
 
-  console.log(`Scanning ${inputPrefix}/...`);
-  for await (const key of storage.list(inputPrefix)) {
-    if (key.toLowerCase().endsWith(".docx") && !basename(key).startsWith("~$")) {
-      const id = extractIdFromKey(key);
-      if (!indexState.successIds.has(id)) {
-        files.push(key);
-        if (batchSize !== Infinity && files.length >= batchSize) {
-          console.log(`Listed ${files.length} files to process (batch limit)`);
-          break;
-        }
-      }
-    }
-  }
-  files.sort();
-
-  if (files.length === 0) {
-    console.log(`No new DOCX files to process in ${inputPrefix}`);
+  if (documents.length === 0) {
+    console.log(`No unextracted documents found`);
     return;
   }
 
-  console.log(`Found ${files.length} DOCX files to extract`);
+  console.log(`Found ${documents.length} documents to extract`);
 
   // Create temp directory for processing
   const tempDir = join(tmpdir(), `docx-extract-${Date.now()}`);
@@ -57,13 +40,10 @@ export async function processDirectory(
 
   try {
     const { successCount, errorCount } = await processBatch(
-      files,
-      storage,
-      outputPrefix,
+      documents,
+      config,
       tempDir,
-      config.workers,
-      verbose,
-      indexState.errorIds
+      verbose
     );
 
     console.log(`Processed: ${successCount} success, ${errorCount} errors`);
@@ -74,11 +54,10 @@ export async function processDirectory(
 
   console.log("\nExtraction complete!");
   console.log(`  Output: ${outputPrefix}/{hash}.txt`);
-  console.log(`  Index: ${outputPrefix}/${INDEX_FILE}`);
 }
 
 async function extractWithPython(
-  sourceKey: string,
+  doc: DocumentRecord,
   localFilePath: string
 ): Promise<ExtractedDocument> {
   const proc = Bun.spawn([PYTHON_PATH, SCRIPT_PATH, localFilePath], {
@@ -96,11 +75,10 @@ async function extractWithPython(
   }
 
   const result = JSON.parse(stdout);
-  const id = extractIdFromKey(sourceKey);
 
   return {
-    id,
-    sourceKey,
+    id: doc.id,
+    sourceKey: `documents/${doc.id}.docx`,
     text: result.text,
     wordCount: result.wordCount,
     charCount: result.charCount,
@@ -111,17 +89,15 @@ async function extractWithPython(
 }
 
 async function processBatch(
-  keys: string[],
-  storage: ExtractConfig["storage"],
-  outputPrefix: string,
+  documents: DocumentRecord[],
+  config: ExtractConfig,
   tempDir: string,
-  workers: number,
-  verbose: boolean,
-  existingErrorIds: Set<string>
+  verbose: boolean
 ): Promise<{ successCount: number; errorCount: number }> {
+  const { db, storage, inputPrefix, outputPrefix, workers } = config;
   let successCount = 0;
   let errorCount = 0;
-  const queue = [...keys];
+  const queue = [...documents];
 
   // Progress tracking (only used when not verbose)
   const startTime = Date.now();
@@ -141,7 +117,7 @@ async function processBatch(
 
     const lines = formatProgress({
       saved: successCount + errorCount,
-      total: keys.length,
+      total: documents.length,
       docsPerSec: currentDocsPerSec,
       failed: errorCount > 0 ? errorCount : undefined,
       elapsedMs: now - startTime,
@@ -154,10 +130,10 @@ async function processBatch(
 
   const processFile = async (): Promise<void> => {
     while (queue.length > 0) {
-      const sourceKey = queue.shift();
-      if (!sourceKey) continue;
+      const doc = queue.shift();
+      if (!doc) continue;
 
-      const id = extractIdFromKey(sourceKey);
+      const sourceKey = `${inputPrefix}/${doc.id}.docx`;
 
       try {
         // Download file from storage to temp
@@ -166,41 +142,48 @@ async function processBatch(
           throw new Error(`File not found: ${sourceKey}`);
         }
 
-        const tempFile = join(tempDir, `${id}.docx`);
+        const tempFile = join(tempDir, `${doc.id}.docx`);
         await Bun.write(tempFile, content);
 
         // Extract using Python
-        const document = await extractWithPython(sourceKey, tempFile);
+        const extracted = await extractWithPython(doc, tempFile);
 
-        // Write text file immediately
-        await storage.write(`${outputPrefix}/${document.id}.txt`, document.text);
-        // Append to index immediately
-        await appendToIndex(storage, outputPrefix, document);
+        // Write text file to storage
+        await storage.write(`${outputPrefix}/${doc.id}.txt`, extracted.text);
+
+        // Update database with extraction metadata
+        await db.updateExtraction({
+          id: doc.id,
+          word_count: extracted.wordCount,
+          char_count: extracted.charCount,
+          table_count: extracted.tableCount,
+          image_count: extracted.imageCount,
+          extracted_at: extracted.extractedAt,
+        });
+
         successCount++;
 
         // Cleanup temp file
         await rm(tempFile, { force: true });
 
         if (verbose) {
-          console.log(`  Extracted: ${basename(sourceKey)} (${document.wordCount} words)`);
+          console.log(`  Extracted: ${doc.id} (${extracted.wordCount} words)`);
         }
       } catch (err) {
         const error = err instanceof Error ? err.message : String(err);
-        // Only append error if not already recorded
-        if (!existingErrorIds.has(id)) {
-          await appendError(storage, outputPrefix, error, sourceKey);
-          existingErrorIds.add(id); // Track in-flight errors too
-        }
+
+        // Update database with error
+        await db.updateExtractionError(doc.id, error);
         errorCount++;
 
         if (verbose) {
-          console.error(`  Failed: ${basename(sourceKey)}: ${error}`);
+          console.error(`  Failed: ${doc.id}: ${error}`);
         }
       }
     }
   };
 
-  const workerPromises = Array(Math.min(workers, keys.length))
+  const workerPromises = Array(Math.min(workers, documents.length))
     .fill(null)
     .map(() => processFile());
 
@@ -214,79 +197,4 @@ async function processBatch(
   }
 
   return { successCount, errorCount };
-}
-
-function extractIdFromKey(key: string): string {
-  // Extract hash from filename: "documents/abc123.docx" → "abc123"
-  const filename = basename(key);
-  return filename.replace(/\.docx$/i, "");
-}
-
-async function appendError(
-  storage: ExtractConfig["storage"],
-  outputPrefix: string,
-  error: string,
-  sourceKey: string
-): Promise<void> {
-  const indexKey = `${outputPrefix}/${INDEX_FILE}`;
-  const id = extractIdFromKey(sourceKey);
-  const line = JSON.stringify({ id, error, extractedAt: new Date().toISOString() }) + "\n";
-
-  // Read existing index and append
-  const existing = await storage.read(indexKey);
-  const existingText = existing ? new TextDecoder().decode(existing) : "";
-  await storage.write(indexKey, existingText + line);
-}
-
-interface IndexState {
-  successIds: Set<string>;
-  errorIds: Set<string>;
-}
-
-async function loadIndexState(
-  storage: ExtractConfig["storage"],
-  outputPrefix: string
-): Promise<IndexState> {
-  const successIds = new Set<string>();
-  const errorIds = new Set<string>();
-  try {
-    const content = await storage.read(`${outputPrefix}/${INDEX_FILE}`);
-    if (content) {
-      const text = new TextDecoder().decode(content);
-      for (const line of text.split("\n")) {
-        if (line.trim()) {
-          const entry = JSON.parse(line);
-          if (entry.error) {
-            errorIds.add(entry.id);
-          } else {
-            successIds.add(entry.id);
-          }
-        }
-      }
-    }
-  } catch {
-    // Index doesn't exist yet, return empty sets
-  }
-  return { successIds, errorIds };
-}
-
-async function appendToIndex(
-  storage: ExtractConfig["storage"],
-  outputPrefix: string,
-  doc: ExtractedDocument
-): Promise<void> {
-  const indexKey = `${outputPrefix}/${INDEX_FILE}`;
-  const entry = {
-    id: doc.id,
-    extractedAt: doc.extractedAt,
-    wordCount: doc.wordCount,
-    charCount: doc.charCount,
-    tableCount: doc.tableCount,
-    imageCount: doc.imageCount,
-  };
-
-  // Read existing index and append
-  const existing = await storage.read(indexKey);
-  const existingText = existing ? new TextDecoder().decode(existing) : "";
-  await storage.write(indexKey, existingText + JSON.stringify(entry) + "\n");
 }

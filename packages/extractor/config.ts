@@ -1,4 +1,7 @@
 export interface ExtractorConfig {
+  database: {
+    url: string;
+  };
   storage: {
     localPath: string;
   };
@@ -20,6 +23,9 @@ export function loadExtractorConfig(): ExtractorConfig {
   const env = process.env;
 
   return {
+    database: {
+      url: env.DATABASE_URL || "",
+    },
     storage: {
       localPath: env.STORAGE_PATH || "./corpus",
     },

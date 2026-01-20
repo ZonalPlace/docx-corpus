@@ -25,7 +25,8 @@ Options
 
 Examples
   corpus scrape --crawl 3 --batch 100
-  corpus extract -i ./docs -o ./output
+  corpus extract -b 100
+  corpus embed -m bge-m3
   corpus status
 `;
 

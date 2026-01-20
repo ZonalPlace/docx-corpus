@@ -1,6 +1,9 @@
 import type { EmbeddingModel } from "./types";
 
 export interface EmbedderConfig {
+  database: {
+    url: string;
+  };
   storage: {
     localPath: string;
   };
@@ -12,10 +15,8 @@ export interface EmbedderConfig {
   };
   embed: {
     inputPrefix: string;
-    outputPrefix: string;
     model: EmbeddingModel;
     batchSize: number;
-    workers: number;
   };
   voyage: {
     apiKey: string;
@@ -26,6 +27,9 @@ export function loadEmbedderConfig(): EmbedderConfig {
   const env = process.env;
 
   return {
+    database: {
+      url: env.DATABASE_URL || "",
+    },
     storage: {
       localPath: env.STORAGE_PATH || "./corpus",
     },
@@ -37,10 +41,8 @@ export function loadEmbedderConfig(): EmbedderConfig {
     },
     embed: {
       inputPrefix: env.EMBED_INPUT_PREFIX || "extracted",
-      outputPrefix: env.EMBED_OUTPUT_PREFIX || "embeddings",
       model: (env.EMBED_MODEL as EmbeddingModel) || "minilm",
       batchSize: parseInt(env.EMBED_BATCH_SIZE || "100", 10),
-      workers: parseInt(env.EMBED_WORKERS || "4", 10),
     },
     voyage: {
       apiKey: env.VOYAGE_API_KEY || "",

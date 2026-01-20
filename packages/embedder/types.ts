@@ -1,4 +1,4 @@
-import type { Storage } from "@docx-corpus/shared";
+import type { DbClient, Storage } from "@docx-corpus/shared";
 
 /**
  * Supported embedding models
@@ -17,23 +17,12 @@ export interface EmbeddedDocument {
 }
 
 /**
- * Index entry for tracking (without the full embedding)
- */
-export interface EmbeddingIndexEntry {
-  id: string;
-  model: EmbeddingModel;
-  dimensions: number;
-  embeddedAt: string;
-}
-
-/**
  * Configuration for the embedding process
  */
 export interface EmbedConfig {
+  db: DbClient;
   storage: Storage;
   inputPrefix: string;
-  outputPrefix: string;
   model: EmbeddingModel;
   batchSize: number;
-  workers: number;
 }

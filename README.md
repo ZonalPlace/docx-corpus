@@ -69,22 +69,35 @@ bun install
 
 ```
 packages/
-  shared/         # Shared utilities (progress bars, formatting)
+  shared/         # Shared utilities (DB client, storage, formatting)
   scraper/        # Core scraper logic (downloads WARC, validates .docx)
   extractor/      # Text extraction using Docling (Python)
+  embedder/       # Document embeddings using sentence-transformers (Python)
 apps/
   cli/            # Unified CLI - corpus <command>
   cdx-filter/     # AWS Lambda - filters CDX indexes for .docx URLs
   web/            # Landing page - docxcorp.us
+db/
+  schema.sql      # PostgreSQL schema (with pgvector)
+  migrations/     # Database migrations
 ```
 
-| Package/App    | Purpose                           | Runtime              |
-| -------------- | --------------------------------- | -------------------- |
-| **cli**        | Unified CLI entry point           | Bun                  |
-| **scraper**    | Download and validate .docx files | Bun                  |
-| **extractor**  | Extract text from .docx files     | Bun + Python         |
-| **cdx-filter** | Filter Common Crawl CDX indexes   | AWS Lambda (Node.js) |
-| **web**        | Landing page                      | Static HTML          |
+**Apps** (entry points)
+
+| App            | Purpose                         | Uses                     |
+| -------------- | ------------------------------- | ------------------------ |
+| **cli**        | `corpus` command                | scraper, extractor, embedder |
+| **cdx-filter** | Filter CDX indexes (Lambda)     | -                        |
+| **web**        | Landing page                    | -                        |
+
+**Packages** (libraries)
+
+| Package        | Purpose                           | Runtime      |
+| -------------- | --------------------------------- | ------------ |
+| **shared**     | DB client, storage, formatting    | Bun          |
+| **scraper**    | Download and validate .docx files | Bun          |
+| **extractor**  | Extract text (Docling)            | Bun + Python |
+| **embedder**   | Generate embeddings               | Bun + Python |
 
 ## Usage
 
@@ -134,6 +147,20 @@ bun run corpus extract --batch 50 --workers 8
 bun run corpus extract --verbose
 ```
 
+### 4. Generate embeddings
+
+```bash
+# Embed all extracted documents (default: minilm, 384 dims)
+bun run corpus embed
+
+# Use a different model
+bun run corpus embed --model bge-m3      # 1024 dims
+bun run corpus embed --model voyage-lite  # requires VOYAGE_API_KEY
+
+# Embed with batch limit
+bun run corpus embed --batch 100 --verbose
+```
+
 ### Docker
 
 Run the CLI in a container:
@@ -173,35 +200,62 @@ export R2_SECRET_ACCESS_KEY=xxx
 bun run corpus scrape --crawl CC-MAIN-2025-51 --batch 1000
 ```
 
+## Local Development
+
+Start PostgreSQL with pgvector locally:
+
+```bash
+docker compose up -d
+
+# Verify
+docker exec docx-corpus-postgres-1 psql -U postgres -d docx_corpus -c "\dt"
+```
+
+Run commands against local database:
+
+```bash
+DATABASE_URL=postgres://postgres:postgres@localhost:5432/docx_corpus \
+CLOUDFLARE_ACCOUNT_ID='' \
+bun run corpus status
+```
+
 ## Configuration
 
 All configuration via environment variables (`.env`):
 
 ```bash
-# Cloudflare R2 (required for both Lambda and scraper)
+# Database (required)
+DATABASE_URL=postgres://user:pass@host:5432/dbname
+
+# Cloudflare R2 (required for cloud storage)
 CLOUDFLARE_ACCOUNT_ID=
 R2_ACCESS_KEY_ID=
 R2_SECRET_ACCESS_KEY=
 R2_BUCKET_NAME=docx-corpus
 
-# Scraping
+# Local storage (used when R2 not configured)
 STORAGE_PATH=./corpus
-CRAWL_ID=CC-MAIN-2025-51
 
-# Performance tuning
-CONCURRENCY=50              # Parallel downloads
-RATE_LIMIT_RPS=50           # Requests per second (initial)
-MAX_RPS=100                 # Max requests per second
-MIN_RPS=10                  # Min requests per second
-TIMEOUT_MS=45000            # Request timeout in ms
-MAX_RETRIES=10              # Max retry attempts
-MAX_BACKOFF_MS=60000        # Max backoff delay (ms)
+# Scraping
+CRAWL_ID=CC-MAIN-2025-51
+CONCURRENCY=50
+RATE_LIMIT_RPS=50
+MAX_RPS=100
+MIN_RPS=10
+TIMEOUT_MS=45000
+MAX_RETRIES=10
 
 # Extractor
-EXTRACT_INPUT_PREFIX=documents  # Input directory prefix
-EXTRACT_OUTPUT_PREFIX=extracted # Output directory prefix
-EXTRACT_BATCH_SIZE=100          # Documents per batch
-EXTRACT_WORKERS=4               # Parallel workers
+EXTRACT_INPUT_PREFIX=documents
+EXTRACT_OUTPUT_PREFIX=extracted
+EXTRACT_BATCH_SIZE=100
+EXTRACT_WORKERS=4
+
+# Embedder
+EMBED_INPUT_PREFIX=extracted
+EMBED_MODEL=minilm           # minilm | bge-m3 | voyage-lite
+EMBED_BATCH_SIZE=100
+VOYAGE_API_KEY=              # Required for voyage-lite model
 ```
 
 ### Rate Limiting

@@ -20,3 +20,13 @@ export {
   type StorageWriter,
   type R2Config,
 } from "./storage";
+
+export {
+  createDb,
+  type DbClient,
+  type DocumentRecord,
+  type DocumentStatus,
+  type ExtractionData,
+  type EmbeddingData,
+  type ClassificationData,
+} from "./db";

@@ -4,7 +4,7 @@ import {
   hasCloudflareCredentials,
   type ExtractConfig,
 } from "@docx-corpus/extractor";
-import { createLocalStorage, createR2Storage } from "@docx-corpus/shared";
+import { createDb, createLocalStorage, createR2Storage } from "@docx-corpus/shared";
 
 interface ParsedFlags {
   batchSize?: number;
@@ -52,7 +52,7 @@ Storage is auto-selected based on environment:
   - With R2 credentials: reads from r2://documents/, writes to r2://extracted/
   - Without R2 credentials: reads from ./corpus/documents/, writes to ./corpus/extracted/
 
-Already-extracted files are automatically skipped (tracked in index.jsonl).
+Extraction progress is tracked in the database (extracted_at column).
 
 Options
   --batch, -b <n>         Limit to n documents (default: all)
@@ -61,6 +61,7 @@ Options
   --help, -h              Show this help
 
 Environment Variables
+  DATABASE_URL            PostgreSQL connection string (required)
   STORAGE_PATH            Local storage path (default: ./corpus)
   CLOUDFLARE_ACCOUNT_ID   Cloudflare account ID (enables R2)
   R2_ACCESS_KEY_ID        R2 access key
@@ -85,7 +86,17 @@ export async function runExtract(args: string[]) {
 
   const flags = parseFlags(args);
   const envConfig = loadExtractorConfig();
+
+  // Validate database URL
+  if (!envConfig.database.url) {
+    console.error("Error: DATABASE_URL environment variable is required");
+    process.exit(1);
+  }
+
   const useCloud = hasCloudflareCredentials(envConfig);
+
+  // Create database client
+  const db = await createDb(envConfig.database.url);
 
   // Create storage based on credentials
   const storage = useCloud
@@ -98,10 +109,11 @@ export async function runExtract(args: string[]) {
     : createLocalStorage(envConfig.storage.localPath);
 
   const config: ExtractConfig = {
+    db,
     storage,
     inputPrefix: envConfig.extract.inputPrefix,
     outputPrefix: envConfig.extract.outputPrefix,
-    batchSize: flags.batchSize ?? Infinity,
+    batchSize: flags.batchSize ?? 1000000,
     workers: flags.workers ?? envConfig.extract.workers,
   };
 
@@ -113,7 +125,7 @@ export async function runExtract(args: string[]) {
   console.log(`Input:   ${config.inputPrefix}/`);
   console.log(`Output:  ${config.outputPrefix}/`);
   console.log(`Workers: ${config.workers}`);
-  console.log(`Batch:   ${config.batchSize === Infinity ? "all" : config.batchSize}`);
+  console.log(`Batch:   ${config.batchSize >= 1000000 ? "all" : config.batchSize}`);
   console.log("");
 
   try {
@@ -121,5 +133,7 @@ export async function runExtract(args: string[]) {
   } catch (err) {
     console.error("Fatal error:", err);
     process.exit(1);
+  } finally {
+    await db.close();
   }
 }
