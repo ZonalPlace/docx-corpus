@@ -56,6 +56,8 @@ export async function processDirectory(
   console.log(`  Output: ${outputPrefix}/{hash}.txt`);
 }
 
+const EXTRACTION_TIMEOUT_MS = 120_000; // 2 minutes per document
+
 async function extractWithPython(
   doc: DocumentRecord,
   localFilePath: string
@@ -65,9 +67,29 @@ async function extractWithPython(
     stderr: "pipe",
   });
 
-  const stdout = await new Response(proc.stdout).text();
-  const stderr = await new Response(proc.stderr).text();
-  const exitCode = await proc.exited;
+  const extractionPromise = (async () => {
+    const stdout = await new Response(proc.stdout).text();
+    const stderr = await new Response(proc.stderr).text();
+    const exitCode = await proc.exited;
+    return { stdout, stderr, exitCode };
+  })();
+
+  let timeoutId: Timer;
+  const timeoutPromise = new Promise<never>((_, reject) => {
+    timeoutId = setTimeout(() => {
+      proc.kill();
+      reject(new Error(`Extraction timed out after ${EXTRACTION_TIMEOUT_MS / 1000}s`));
+    }, EXTRACTION_TIMEOUT_MS);
+  });
+
+  try {
+    var { stdout, stderr, exitCode } = await Promise.race([
+      extractionPromise,
+      timeoutPromise,
+    ]);
+  } finally {
+    clearTimeout(timeoutId!);
+  }
 
   if (exitCode !== 0) {
     const errorData = stderr ? JSON.parse(stderr) : { error: "Unknown error" };
