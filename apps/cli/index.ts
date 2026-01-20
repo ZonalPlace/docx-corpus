@@ -2,6 +2,7 @@
 
 import { runScrape } from "./commands/scrape";
 import { runExtract } from "./commands/extract";
+import { runEmbed } from "./commands/embed";
 import { runStatus } from "./commands/status";
 
 const VERSION = "0.1.0";
@@ -15,6 +16,7 @@ Usage
 Commands
   scrape    Download .docx files from Common Crawl
   extract   Extract text from DOCX files using Docling
+  embed     Generate embeddings for extracted documents
   status    Show corpus statistics
 
 Options
@@ -49,6 +51,9 @@ async function main() {
       break;
     case "extract":
       await runExtract(commandArgs);
+      break;
+    case "embed":
+      await runEmbed(commandArgs);
       break;
     case "status":
       await runStatus(commandArgs);

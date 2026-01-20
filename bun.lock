@@ -11,7 +11,7 @@
     },
     "apps/cdx-filter": {
       "name": "@docx-corpus/cdx-filter",
-      "version": "0.6.0",
+      "version": "0.9.2",
       "dependencies": {
         "@aws-sdk/client-s3": "^3.966.0",
       },
@@ -27,11 +27,12 @@
     },
     "apps/cli": {
       "name": "@docx-corpus/cli",
-      "version": "0.1.0",
+      "version": "0.4.2",
       "bin": {
         "corpus": "./index.ts",
       },
       "dependencies": {
+        "@docx-corpus/embedder": "workspace:*",
         "@docx-corpus/extractor": "workspace:*",
         "@docx-corpus/scraper": "workspace:*",
         "@docx-corpus/shared": "workspace:*",
@@ -43,6 +44,17 @@
         "@semantic-release/github": "^12.0.2",
         "@types/bun": "latest",
         "semantic-release": "^25.0.2",
+        "typescript": "^5.9.3",
+      },
+    },
+    "packages/embedder": {
+      "name": "@docx-corpus/embedder",
+      "version": "0.1.0",
+      "dependencies": {
+        "@docx-corpus/shared": "workspace:*",
+      },
+      "devDependencies": {
+        "@types/bun": "latest",
         "typescript": "^5.9.3",
       },
     },
@@ -200,6 +212,8 @@
     "@docx-corpus/cdx-filter": ["@docx-corpus/cdx-filter@workspace:apps/cdx-filter"],
 
     "@docx-corpus/cli": ["@docx-corpus/cli@workspace:apps/cli"],
+
+    "@docx-corpus/embedder": ["@docx-corpus/embedder@workspace:packages/embedder"],
 
     "@docx-corpus/extractor": ["@docx-corpus/extractor@workspace:packages/extractor"],
 

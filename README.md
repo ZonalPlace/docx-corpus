@@ -118,6 +118,22 @@ bun run corpus scrape --crawl CC-MAIN-2025-51 --force
 bun run corpus status
 ```
 
+### 3. Extract text from documents
+
+```bash
+# Extract all documents
+bun run corpus extract
+
+# Extract with batch limit
+bun run corpus extract --batch 100
+
+# Extract with custom workers
+bun run corpus extract --batch 50 --workers 8
+
+# Verbose output
+bun run corpus extract --verbose
+```
+
 ### Docker
 
 Run the CLI in a container:
