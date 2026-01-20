@@ -23,24 +23,38 @@ Document rendering is hard. Microsoft Word has decades of edge cases, quirks, an
 ## How It Works
 
 ```
-                         Phase 1: Index Filtering (Lambda)
-┌──────────────────┐      ┌──────────────────┐      ┌──────────────────┐
-│   Common Crawl   │      │   cdx-filter     │      │   Cloudflare R2  │
-│      (S3)        │ ───► │    (Lambda)      │ ───► │                  │
-│                  │      │                  │      │  cdx-filtered/   │
-│  CDX indexes     │      │  Filters .docx   │      │  *.jsonl         │
-└──────────────────┘      └──────────────────┘      └──────────────────┘
+Phase 1: Index Filtering (Lambda)
+┌────────────────┐     ┌────────────────┐     ┌────────────────┐
+│  Common Crawl  │     │   cdx-filter   │     │  Cloudflare R2 │
+│  CDX indexes   │ ──► │   (Lambda)     │ ──► │  cdx-filtered/ │
+└────────────────┘     └────────────────┘     └────────────────┘
 
-                         Phase 2: Document Collection (CLI)
-┌──────────────────┐      ┌──────────────────┐      ┌──────────────────┐
-│   Cloudflare R2  │      │   corpus CLI     │      │     Storage      │
-│                  │ ───► │     (Bun)        │ ───► │                  │
-│  cdx-filtered/   │      │                  │      │  Local or R2     │
-│  *.jsonl         │      │  Downloads WARC  │      │  documents/      │
-├──────────────────┤      │  Validates docx  │      └──────────────────┘
-│   Common Crawl   │ ───► │  Deduplicates    │
-│  WARC archives   │      │                  │
-└──────────────────┘      └──────────────────┘
+Phase 2: Scrape (corpus scrape)
+┌────────────────┐     ┌────────────────┐     ┌────────────────┐
+│  Common Crawl  │     │                │     │    Storage     │
+│  WARC archives │ ──► │  Downloads     │ ──► │  documents/    │
+├────────────────┤     │  Validates     │     │  {hash}.docx   │
+│  Cloudflare R2 │     │  Deduplicates  │     ├────────────────┤
+│  cdx-filtered/ │ ──► │                │ ──► │   PostgreSQL   │
+└────────────────┘     └────────────────┘     │  (metadata)    │
+                                              └────────────────┘
+
+Phase 3: Extract (corpus extract)
+┌────────────────┐     ┌────────────────┐     ┌────────────────┐
+│    Storage     │     │    Docling     │     │    Storage     │
+│  documents/    │ ──► │   (Python)     │ ──► │  extracted/    │
+│  {hash}.docx   │     │                │     │  {hash}.txt    │
+└────────────────┘     │  Extracts text │     ├────────────────┤
+                       │  Counts words  │ ──► │   PostgreSQL   │
+                       └────────────────┘     │  (word_count)  │
+                                              └────────────────┘
+
+Phase 4: Embed (corpus embed)
+┌────────────────┐     ┌────────────────┐     ┌────────────────┐
+│    Storage     │     │ sentence-      │     │   PostgreSQL   │
+│  extracted/    │ ──► │ transformers   │ ──► │   (pgvector)   │
+│  {hash}.txt    │     │   (Python)     │     │  embedding     │
+└────────────────┘     └────────────────┘     └────────────────┘
 ```
 
 ### Why Common Crawl?
