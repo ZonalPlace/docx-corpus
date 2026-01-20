@@ -64,6 +64,7 @@ export interface DbClient {
   getDocument(id: string): Promise<DocumentRecord | null>;
   getDocumentByUrl(url: string): Promise<DocumentRecord | null>;
   getUploadedUrls(): Promise<Set<string>>;
+  getFailedUrls(): Promise<Set<string>>;
   getPendingDocuments(limit: number): Promise<DocumentRecord[]>;
   getDocumentsByStatus(status: DocumentStatus, limit?: number): Promise<DocumentRecord[]>;
   getStats(): Promise<{ status: string; count: number }[]>;
@@ -157,6 +158,13 @@ export async function createDb(databaseUrl: string): Promise<DbClient> {
       return new Set(rows.map((r) => r.source_url));
     },
 
+    async getFailedUrls() {
+      const rows = await sql<{ source_url: string }[]>`
+        SELECT source_url FROM documents WHERE status = 'failed'
+      `;
+      return new Set(rows.map((r) => r.source_url));
+    },
+
     async getPendingDocuments(limit: number) {
       return sql<DocumentRecord[]>`
         SELECT * FROM documents WHERE status = 'pending' LIMIT ${limit}
@@ -207,11 +215,12 @@ export async function createDb(databaseUrl: string): Promise<DbClient> {
     },
 
     async getUnextractedDocuments(limit: number) {
-      // Get docs that haven't been extracted yet (includes failed ones for retry)
+      // Get docs that haven't been extracted yet (excludes previously failed ones)
       return sql<DocumentRecord[]>`
         SELECT * FROM documents
         WHERE status = 'uploaded'
           AND extracted_at IS NULL
+          AND extraction_error IS NULL
         ORDER BY uploaded_at ASC
         LIMIT ${limit}
       `;

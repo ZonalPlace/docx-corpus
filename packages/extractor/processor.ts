@@ -56,7 +56,7 @@ export async function processDirectory(
   console.log(`  Output: ${outputPrefix}/{hash}.txt`);
 }
 
-const EXTRACTION_TIMEOUT_MS = 120_000; // 2 minutes per document
+const EXTRACTION_TIMEOUT_MS = 30_000; // 30 seconds per document
 
 async function extractWithPython(
   doc: DocumentRecord,

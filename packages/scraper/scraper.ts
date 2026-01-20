@@ -164,8 +164,10 @@ export async function scrape(options: ScrapeOptions) {
   // Initialize database
   const db = await createDb(config.database.url);
 
-  // Pre-load successful URLs for fast duplicate checking
+  // Pre-load processed URLs for fast duplicate checking (includes both uploaded and failed)
   const uploadedUrls = force ? new Set<string>() : await db.getUploadedUrls();
+  const failedUrls = force ? new Set<string>() : await db.getFailedUrls();
+  const processedUrls = new Set([...uploadedUrls, ...failedUrls]);
 
   // Aggregate stats across all crawls
   const totalStats = { saved: 0, skipped: 0, failed: 0 };
@@ -247,7 +249,7 @@ export async function scrape(options: ScrapeOptions) {
 
       const task = downloadLimit(async () => {
         // Check duplicates BEFORE rate limiting (instant skip)
-        if (!force && uploadedUrls.has(record.url)) {
+        if (!force && processedUrls.has(record.url)) {
           stats.skipped++;
           updateProgress();
           return;
