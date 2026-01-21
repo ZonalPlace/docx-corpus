@@ -19,6 +19,7 @@ import contextlib
 
 from docling.document_converter import DocumentConverter
 from docling.datamodel.base_models import InputFormat
+from docling_core.types.doc.labels import DocItemLabel
 
 
 @contextlib.contextmanager
@@ -43,12 +44,46 @@ def strip_image_data(extraction: dict) -> dict:
     return extraction
 
 
+def smart_extract_text(doc) -> str:
+    """Extract text without table markdown bloat.
+
+    Docling's export_to_markdown() pads table cells with spaces for column alignment,
+    which causes exponential growth when tables are nested (common in DOCX).
+    This function extracts:
+    1. Non-table content as markdown (preserves headings, lists, emphasis)
+    2. Table cells as plain text (without markdown table formatting)
+    """
+    # Get non-table content as markdown
+    non_table_labels = set(DocItemLabel) - {DocItemLabel.TABLE}
+    non_table_content = doc.export_to_markdown(labels=non_table_labels)
+
+    # Get table cell text directly (no markdown formatting)
+    table_texts = []
+    for table in doc.tables:
+        rows = []
+        for row in table.data.grid:
+            cells = []
+            for cell in row:
+                # Use cell.text attribute if available, otherwise empty
+                if hasattr(cell, 'text') and cell.text:
+                    cells.append(cell.text)
+            if cells:
+                rows.append(' | '.join(cells))
+        if rows:
+            table_texts.append('\n'.join(rows))
+
+    # Combine non-table content with table text
+    if table_texts:
+        return non_table_content + '\n\n' + '\n\n'.join(table_texts)
+    return non_table_content
+
+
 def extract(converter: DocumentConverter, file_path: str) -> dict:
     """Extract text and structure from a DOCX file using Docling."""
     result = converter.convert(file_path)
 
-    # Export as markdown for text extraction
-    text = result.document.export_to_markdown()
+    # Use smart extraction to avoid table padding bloat
+    text = smart_extract_text(result.document)
 
     # Get full structured extraction (stripped of image data)
     extraction = result.document.export_to_dict()
