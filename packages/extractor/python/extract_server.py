@@ -6,10 +6,31 @@ This avoids the overhead of spawning a new Python process for each document.
 """
 import json
 import sys
+import warnings
+import logging
 from pathlib import Path
+
+# Suppress all warnings and logging from Docling and its dependencies
+warnings.filterwarnings("ignore")
+logging.disable(logging.CRITICAL)  # Disable all logging
+
+import os
+import contextlib
 
 from docling.document_converter import DocumentConverter
 from docling.datamodel.base_models import InputFormat
+
+
+@contextlib.contextmanager
+def suppress_stderr():
+    """Temporarily suppress stderr to hide Docling's verbose output."""
+    with open(os.devnull, 'w') as devnull:
+        old_stderr = sys.stderr
+        sys.stderr = devnull
+        try:
+            yield
+        finally:
+            sys.stderr = old_stderr
 
 
 def strip_image_data(extraction: dict) -> dict:
@@ -64,7 +85,9 @@ def main():
                 print(json.dumps({"success": False, "error": f"File not found: {file_path}"}), flush=True)
                 continue
 
-            result = extract(converter, file_path)
+            # Suppress stderr during extraction to hide Docling's verbose output
+            with suppress_stderr():
+                result = extract(converter, file_path)
             print(json.dumps({"success": True, **result}), flush=True)
 
         except Exception as e:
