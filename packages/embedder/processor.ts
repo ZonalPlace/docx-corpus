@@ -11,6 +11,38 @@ const GOOGLE_MODEL = "gemini-embedding-001";
 const GOOGLE_DIMENSIONS = 3072;
 const API_BATCH_SIZE = 100; // Google supports up to 100 texts per request
 
+// Adaptive rate limiter - adjusts delay based on 429 responses
+class RateLimiter {
+  private delayMs = 50; // Start at ~20 RPS
+  private minDelay = 20;
+  private maxDelay = 5000;
+  private lastRequest = 0;
+  private successCount = 0;
+
+  async wait() {
+    const now = Date.now();
+    const elapsed = now - this.lastRequest;
+    if (elapsed < this.delayMs) {
+      await new Promise((r) => setTimeout(r, this.delayMs - elapsed));
+    }
+    this.lastRequest = Date.now();
+  }
+
+  success() {
+    this.successCount++;
+    // Gradually speed up after 20 successful requests
+    if (this.successCount >= 20 && this.delayMs > this.minDelay) {
+      this.delayMs = Math.max(this.minDelay, this.delayMs * 0.9);
+      this.successCount = 0;
+    }
+  }
+
+  backoff() {
+    this.delayMs = Math.min(this.maxDelay, this.delayMs * 2);
+    this.successCount = 0;
+  }
+}
+
 /**
  * Split text into overlapping chunks for embedding.
  */
@@ -81,8 +113,9 @@ export async function processEmbeddings(config: EmbedConfig, verbose: boolean = 
     throw new Error("GOOGLE_API_KEY environment variable required");
   }
 
-  // Initialize Google GenAI client
+  // Initialize Google GenAI client and rate limiter
   const ai = new GoogleGenAI({ apiKey });
+  const rateLimiter = new RateLimiter();
 
   // Get embedding stats from database
   const stats = await db.getEmbeddingStats();
@@ -208,32 +241,29 @@ export async function processEmbeddings(config: EmbedConfig, verbose: boolean = 
         });
       }
 
-      // Process batches with concurrency limit
+      // Process batch with rate limiting and retry
       const processBatch = async (task: { startIdx: number; chunks: string[] }) => {
-        let retries = 0;
-        const maxRetries = 3;
-        while (retries < maxRetries) {
+        while (true) {
+          await rateLimiter.wait();
           try {
             const embeddings = await embedTexts(task.chunks);
             for (let k = 0; k < embeddings.length; k++) {
               chunkEmbeddings[task.startIdx + k] = embeddings[k];
             }
+            rateLimiter.success();
             return;
           } catch (error: unknown) {
             const errorMsg = error instanceof Error ? error.message : String(error);
             if (errorMsg.includes("429") || errorMsg.includes("rate") || errorMsg.includes("quota")) {
-              retries++;
-              const waitTime = Math.pow(2, retries) * 2; // Shorter wait for parallel
+              rateLimiter.backoff();
               if (verbose) {
-                console.log(`  Rate limited, waiting ${waitTime}s (retry ${retries}/${maxRetries})...`);
+                console.log(`  Rate limited, backing off...`);
               }
-              await new Promise((r) => setTimeout(r, waitTime * 1000));
             } else {
               throw error;
             }
           }
         }
-        throw new Error(`Failed after ${maxRetries} retries due to rate limiting`);
       };
 
       // Run batches with concurrency limit
