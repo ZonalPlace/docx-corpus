@@ -116,6 +116,7 @@ export async function runEmbed(args: string[]) {
     inputPrefix: envConfig.embed.inputPrefix,
     model: "google",
     batchSize: flags.batchSize ?? 1000000,
+    concurrency: envConfig.embed.concurrency,
   };
 
   console.log("Document Embedder");
@@ -127,6 +128,7 @@ export async function runEmbed(args: string[]) {
   console.log(`Output:  database (embedding column)`);
   console.log(`Model:   gemini-embedding-001 (3072 dims)`);
   console.log(`Batch:   ${config.batchSize >= 1000000 ? "all" : config.batchSize}`);
+  console.log(`Concurrency: ${config.concurrency} parallel requests`);
   console.log("");
 
   try {

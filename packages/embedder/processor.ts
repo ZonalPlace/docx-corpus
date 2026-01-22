@@ -15,21 +15,25 @@ const API_BATCH_SIZE = 100; // Google supports up to 100 texts per request
  * Split text into overlapping chunks for embedding.
  */
 function chunkText(text: string): string[] {
-  if (text.length <= CHUNK_SIZE_CHARS) {
-    return [text];
+  const trimmed = text.trim();
+  if (trimmed.length === 0) {
+    return [];
+  }
+  if (trimmed.length <= CHUNK_SIZE_CHARS) {
+    return [trimmed];
   }
 
   const chunks: string[] = [];
   let start = 0;
 
-  while (start < text.length) {
-    const end = Math.min(start + CHUNK_SIZE_CHARS, text.length);
-    const chunk = text.slice(start, end).trim();
+  while (start < trimmed.length) {
+    const end = Math.min(start + CHUNK_SIZE_CHARS, trimmed.length);
+    const chunk = trimmed.slice(start, end).trim();
     if (chunk.length > 0) {
       chunks.push(chunk);
     }
 
-    if (end >= text.length) break;
+    if (end >= trimmed.length) break;
 
     const nextStart = end - CHUNK_OVERLAP_CHARS;
     start = nextStart <= start ? start + 1 : nextStart;
@@ -70,7 +74,7 @@ function weightedAverageEmbeddings(embeddings: number[][], weights: number[]): n
 }
 
 export async function processEmbeddings(config: EmbedConfig, verbose: boolean = false): Promise<void> {
-  const { db, storage, inputPrefix, batchSize } = config;
+  const { db, storage, inputPrefix, batchSize, concurrency } = config;
 
   const apiKey = process.env.GOOGLE_API_KEY;
   if (!apiKey) {
@@ -147,7 +151,7 @@ export async function processEmbeddings(config: EmbedConfig, verbose: boolean = 
 
   try {
     // Process documents in batches
-    const docBatchSize = 10; // Load 10 docs at a time from storage
+    const docBatchSize = 50; // Load docs in batches to fill concurrent API slots
 
     for (let i = 0; i < documents.length; i += docBatchSize) {
       const batch = documents.slice(i, i + docBatchSize);
@@ -161,6 +165,12 @@ export async function processEmbeddings(config: EmbedConfig, verbose: boolean = 
           if (textContent) {
             const text = new TextDecoder().decode(textContent);
             const chunks = chunkText(text);
+            if (chunks.length === 0) {
+              if (verbose) {
+                console.log(`  Skipped: ${doc.id} (empty text content)`);
+              }
+              continue;
+            }
             const weights = chunks.map((c) => c.length);
             docsWithChunks.push({ id: doc.id, chunks, weights });
           }
@@ -186,26 +196,34 @@ export async function processEmbeddings(config: EmbedConfig, verbose: boolean = 
         }
       }
 
-      // Embed all chunks in API batches
+      // Embed all chunks in API batches (with concurrency)
       const chunkEmbeddings: number[][] = new Array(allChunks.length);
 
+      // Prepare all batch tasks
+      const batchTasks: { startIdx: number; chunks: string[] }[] = [];
       for (let j = 0; j < allChunks.length; j += API_BATCH_SIZE) {
-        const batchChunks = allChunks.slice(j, j + API_BATCH_SIZE);
+        batchTasks.push({
+          startIdx: j,
+          chunks: allChunks.slice(j, j + API_BATCH_SIZE),
+        });
+      }
 
+      // Process batches with concurrency limit
+      const processBatch = async (task: { startIdx: number; chunks: string[] }) => {
         let retries = 0;
         const maxRetries = 3;
         while (retries < maxRetries) {
           try {
-            const embeddings = await embedTexts(batchChunks);
+            const embeddings = await embedTexts(task.chunks);
             for (let k = 0; k < embeddings.length; k++) {
-              chunkEmbeddings[j + k] = embeddings[k];
+              chunkEmbeddings[task.startIdx + k] = embeddings[k];
             }
-            break;
+            return;
           } catch (error: unknown) {
             const errorMsg = error instanceof Error ? error.message : String(error);
             if (errorMsg.includes("429") || errorMsg.includes("rate") || errorMsg.includes("quota")) {
               retries++;
-              const waitTime = Math.pow(2, retries) * 10;
+              const waitTime = Math.pow(2, retries) * 2; // Shorter wait for parallel
               if (verbose) {
                 console.log(`  Rate limited, waiting ${waitTime}s (retry ${retries}/${maxRetries})...`);
               }
@@ -215,9 +233,13 @@ export async function processEmbeddings(config: EmbedConfig, verbose: boolean = 
             }
           }
         }
-        if (retries >= maxRetries) {
-          throw new Error(`Failed after ${maxRetries} retries due to rate limiting`);
-        }
+        throw new Error(`Failed after ${maxRetries} retries due to rate limiting`);
+      };
+
+      // Run batches with concurrency limit
+      for (let j = 0; j < batchTasks.length; j += concurrency) {
+        const concurrentBatches = batchTasks.slice(j, j + concurrency);
+        await Promise.all(concurrentBatches.map(processBatch));
       }
 
       // Combine chunk embeddings per document and save

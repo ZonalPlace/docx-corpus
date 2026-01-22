@@ -25,4 +25,5 @@ export interface EmbedConfig {
   inputPrefix: string;
   model: EmbeddingModel;
   batchSize: number;
+  concurrency: number;
 }

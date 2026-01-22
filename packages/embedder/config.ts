@@ -17,6 +17,7 @@ export interface EmbedderConfig {
     inputPrefix: string;
     model: EmbeddingModel;
     batchSize: number;
+    concurrency: number;
   };
   google: {
     apiKey: string;
@@ -43,6 +44,7 @@ export function loadEmbedderConfig(): EmbedderConfig {
       inputPrefix: env.EMBED_INPUT_PREFIX || "extracted",
       model: (env.EMBED_MODEL as EmbeddingModel) || "google",
       batchSize: parseInt(env.EMBED_BATCH_SIZE || "100", 10),
+      concurrency: parseInt(env.EMBED_CONCURRENCY || "20", 10),
     },
     google: {
       apiKey: env.GOOGLE_API_KEY || "",
